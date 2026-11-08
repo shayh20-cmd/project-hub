@@ -885,7 +885,7 @@ html[data-status-icon="outline"] .st-sq[style*="pulse-delay"]{animation:pulse-fi
 .ds-chip.on{background:rgba(37,99,235,.10);border-color:var(--accent);color:var(--accent);}
 .ds-tpl{width:min(680px,96vw);}
 .ds-tpl-list{display:flex;flex-direction:column;gap:4px;}
-.ds-tpl-row{display:grid;grid-template-columns:minmax(0,1fr) 110px 100px 24px;gap:6px;align-items:center;}
+.ds-tpl-row{display:grid;grid-template-columns:minmax(0,1fr) 110px 24px;gap:6px;align-items:center;}
 .rv-page{padding:18px 20px;display:flex;flex-direction:column;gap:14px;overflow:auto;}
 .rv-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;}
 .rv-table{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
@@ -10540,22 +10540,7 @@ function DrawSetTemplateEditor({
   }, DS_REPEAT.map(r => h("option", {
     key: r.id,
     value: r.id
-  }, r.label))), h("select", {
-    className: "af-input",
-    value: it.priority || '',
-    onChange: e => setTpl(t => ({
-      ...t,
-      [key]: t[key].map(x => x.id === it.id ? {
-        ...x,
-        priority: e.target.value
-      } : x)
-    }))
-  }, h("option", {
-    value: ""
-  }, "—"), priorities.map(p => h("option", {
-    key: p.id,
-    value: p.id
-  }, p.label))), h("button", {
+  }, r.label))), h("button", {
     className: "ds-x",
     title: "הסר",
     onClick: () => setTpl(t => ({
