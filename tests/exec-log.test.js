@@ -264,3 +264,19 @@ test('log sheet lookup', () => {
   assert.deepStrictEqual(L.execLogTasks({}), []);
   assert.deepStrictEqual(Object.keys(L.EXT_TYPES), ['issue', 'rfi', 'submittal', 'general']);
 });
+
+/* ── the page: migration on load, and the log kept out of everything that collects tasks ── */
+const fnBody = name => { const i = html.indexOf('function ' + name + '('); assert.ok(i >= 0, name + ' not found'); const j = html.indexOf('\nfunction ', i + 10); return html.slice(i, j < 0 ? i + 200000 : Math.min(j, i + 200000)); };
+
+test('migrateData runs the execution migration with the project disciplines', () => {
+  assert.match(fnBody('migrateData'), /return execMigrateDoc\(.*,execDiscsOf\(d\)\);\}/);
+  assert.match(html, /'disc-CONT':'#[0-9A-F]{6}'/);
+  assert.match(html, /const EXEC_CONT_DISC=\{id:'CONT'/);
+});
+
+test('every task collector takes only list sheets, so the execlog sheet stays out', () => {
+  for (const name of ['MyTasksView', 'searchItemsOf', 'TracksGanttPanel', 'DashboardView', 'runAutomations', 'QuickUpdate', 'InboxPanel', 'OverviewPage'])
+    assert.match(fnBody(name), /type ?=== ?'list'/, name);
+  const vs = html.match(/const visibleStages=[^;]*;/)[0];
+  assert.ok(!vs.includes('execlog'), 'the log is not a track stage');
+});
