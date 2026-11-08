@@ -361,6 +361,14 @@ test('meetings, finishes, My Tasks and the landing read log tasks, not doc.execI
   assert.match(chg, /h\(ExTaskPanel,/);
 });
 
+test('the old item UI is gone; only the conversion still knows doc.execItems', () => {
+  for (const n of ['function ExecItemPanel', 'function ExNewItemDialog', 'function ExPartyChip', 'function exSortBar', 'const EX_LOG_COLS', 'const EX_CHG_COLS'])
+    assert.ok(!html.includes(n), n + ' still in the page');
+  const a = html.indexOf('/* ═══ exec-logic ═══ */'), b = html.indexOf('/* ═══ /exec-logic ═══ */');
+  const outside = [...html.matchAll(/\.execItems/g)].map(x => x.index).filter(i => !(i > a && i < b));
+  assert.deepStrictEqual(outside.map(i => html.slice(i - 40, i + 20)), []);
+});
+
 test('every task collector takes only list sheets, so the execlog sheet stays out', () => {
   for (const name of ['MyTasksView', 'searchItemsOf', 'TracksGanttPanel', 'DashboardView', 'runAutomations', 'QuickUpdate', 'InboxPanel', 'OverviewPage'])
     assert.match(fnBody(name), /type ?=== ?'list'/, name);

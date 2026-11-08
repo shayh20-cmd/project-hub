@@ -4058,6 +4058,14 @@ Object.assign(HE_EN, {
 "משתמשים קבועים": "Regular users",
 "חניה ממושכת": "Long stay",
 "אילוצים פיסיים": "Physical constraints",
+  /* execution log as a task list (2026-11-08) */
+  "משימה כללית": "General task",
+  "בקשת שינוי של הקבלן": "Contractor change request",
+  "מה נקבע במכרז": "Tender specification",
+  "סעיף / הפניה": "Clause / reference",
+  "נפתח ע״י": "Opened by",
+  "מקור: {s}": "Source: {s}",
+  "— ללא —": "— None —",
 });
 
 window.I18N_HE_EN = HE_EN;
