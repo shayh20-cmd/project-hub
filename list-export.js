@@ -255,8 +255,8 @@ ${model.rows.length ? '' : `<div class="empty">${htmlEsc(model.emptyText || '')}
   const h = React.createElement;
   const { useState, useMemo, useEffect } = React;
   const PREFS_KEY = 'ph-list-export';
-  const loadPrefs = () => { try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') || {}; } catch (e) { return {}; } };
-  const savePrefs = p => { try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch (e) {} };
+  const loadPrefs = (key, defaults) => { let p = {}; try { p = JSON.parse(localStorage.getItem(key || PREFS_KEY) || '{}') || {}; } catch (e) {} return { ...(defaults || {}), ...p }; };
+  const savePrefs = (p, key) => { try { localStorage.setItem(key || PREFS_KEY, JSON.stringify(p)); } catch (e) {} };
   const T = (s, vars) => (window.I18N && window.I18N.t ? window.I18N.t(s, vars) : String(s).replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? vars[k] : m)));
 
   const css = document.createElement('style');
@@ -342,8 +342,9 @@ ${model.rows.length ? '' : `<div class="empty">${htmlEsc(model.emptyText || '')}
     fr.srcdoc = html;
   }
 
-  function Dialog({ columns, build, onClose }) {
-    const prefs0 = useMemo(loadPrefs, []);
+  /* prefsKey / defaults: another screen (the plan set's dashboard) keeps its own choices */
+  function Dialog({ columns, build, onClose, prefsKey, defaults }) {
+    const prefs0 = useMemo(() => loadPrefs(prefsKey, defaults), []);
     const [fmt, setFmt] = useState(prefs0.fmt === 'pdf' ? 'pdf' : 'xlsx');
     const [orient, setOrient] = useState(prefs0.orient === 'portrait' ? 'portrait' : 'landscape');
     const [subs, setSubs] = useState(!!prefs0.subtasks);
@@ -367,7 +368,7 @@ ${model.rows.length ? '' : `<div class="empty">${htmlEsc(model.emptyText || '')}
     const toggle = id => setCols(cols.map(c => c.id === id ? { ...c, on: !c.on } : c));
     const setAll = on => setCols(cols.map(c => ({ ...c, on })));
     const go = () => {
-      savePrefs({ fmt, orient, subtasks: subs, done, colors, cols });
+      savePrefs({ fmt, orient, subtasks: subs, done, colors, cols }, prefsKey);
       const model = build(onIds, { subtasks: subs, done, colors }).model;
       if (fmt === 'xlsx') download(buildXlsx(model, orient), model.fileName + '.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       else printHtml(buildPrintHtml(model, orient), model.fileName);

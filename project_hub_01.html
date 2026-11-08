@@ -9665,6 +9665,8 @@ const DS_ST_TEXT = {
   R: '#3B2A05'
 };
 function DrawSetDashboard({
+  exportText,
+  exportTitle,
   groups,
   tasks,
   team,
@@ -9804,6 +9806,158 @@ function DrawSetDashboard({
   const shown = cols.map(id => catalog.find(c => c.id === id)).filter(Boolean);
   const toggle = id => onSetCols(cols.includes(id) ? cols.filter(x => x !== id) : [...cols, id]);
   const dm = iso => iso ? iso.slice(5).split('-').reverse().join('.') : '';
+  /* export, as in the list: the same dialog (its own remembered choices, floors on by default),
+     the rows as numbered here, every document with its floors under it */
+  const [exportOpen, setExportOpen] = useState(false);
+  const XKIND = {
+    __assignee: 'assignee',
+    dsProgress: 'progress',
+    dsDays: 'number',
+    __comment: 'comment',
+    __priority: 'priority',
+    __dates: 'dates',
+    dsReview: 'progress'
+  };
+  const FKIND = {
+    date: 'date',
+    number: 'number',
+    progress: 'progress',
+    people: 'people',
+    select: 'select',
+    timeline: 'timeline'
+  };
+  const xCols = [{
+    id: '__no',
+    label: 'מס׳',
+    kind: 'number'
+  }, {
+    id: '__name',
+    label: 'מסמך',
+    kind: 'name'
+  }, {
+    id: '__status',
+    label: 'סטטוס',
+    kind: 'status'
+  }, ...shown.map(c => ({
+    id: c.id,
+    label: c.label,
+    custom: !!c.field,
+    kind: XKIND[c.id] || c.field && FKIND[c.field.type] || 'text'
+  }))];
+  const xDate = iso => iso ? iso.split('-').reverse().join('.') : '';
+  const xCell = (id, t, isSub, no) => {
+    if (exportText && exportText[id]) return exportText[id](t, isSub) || '';
+    switch (id) {
+      case '__no':
+        return no;
+      case '__name':
+        return t.title || '';
+      case '__status':
+        return tx((DS_STATUSES.find(s => s.id === dsStKey(t)) || DS_STATUSES[0]).label);
+      case '__assignee':
+        return (t.assigneeIds || (t.assigneeId ? [t.assigneeId] : [])).map(i => (team.find(m => m.staffId === i) || {}).name).filter(Boolean).map(nameForLang).join(', ');
+      case '__priority':
+        {
+          const p = priorities.find(x => x.id === t.priority);
+          return p ? nameForLang(p.label) : '';
+        }
+      case '__dates':
+        return t.startDate && t.dueDate ? xDate(t.startDate) + ' – ' + xDate(t.dueDate) : t.dueDate ? tx('עד {d}', {
+          d: xDate(t.dueDate)
+        }) : t.startDate ? tx('החל מ־{d}', {
+          d: xDate(t.startDate)
+        }) : '';
+      case '__comment':
+        return t.comment || '';
+      default:
+        {
+          const f = fields.find(x => x.id === id);
+          const v = (t.fieldValues || {})[id];
+          if (v == null || v === '') return '';
+          if (f && f.type === 'date') return xDate(v);
+          if (f && f.type === 'progress') return v + '%';
+          if (Array.isArray(v)) return v.join(', ');
+          if (typeof v === 'object') return [v.start, v.end].filter(Boolean).map(xDate).join(' – ');
+          return String(v);
+        }
+    }
+  };
+  const xFill = (id, t) => {
+    if (id === '__name' || id === '__status') {
+      const st = DS_STATUSES.find(s => s.id === dsStKey(t)) || DS_STATUSES[0];
+      return {
+        bg: st.color,
+        fg: DS_ST_TEXT[st.id] || '#FFFFFF'
+      };
+    }
+    if (id === '__priority') {
+      const p = priorities.find(x => x.id === t.priority);
+      return p && /^#[0-9a-f]{6}$/i.test(p.color || '') ? {
+        bg: p.color.toUpperCase(),
+        fg: '#FFFFFF'
+      } : null;
+    }
+    return null;
+  };
+  const buildExport = (colIds, {
+    subtasks: withSubs,
+    done: withDone,
+    colors: withColors
+  }) => {
+    const xc = colIds.map(id => xCols.find(c => c.id === id)).filter(Boolean);
+    const keep = t => withDone || dsStKey(t) !== 'C';
+    const rows = [];
+    let count = 0;
+    const push = (t, sub, no) => {
+      count++;
+      rows.push({
+        type: 'task',
+        sub,
+        cells: xc.map(c => xCell(c.id, t, sub, no)),
+        fills: withColors ? xc.map(c => xFill(c.id, t)) : null
+      });
+    };
+    groups.forEach(g => {
+      const gt = tasks.filter(t => t.groupId === g.id);
+      if (!gt.some(keep)) return;
+      rows.push({
+        type: 'section',
+        label: nameForLang(g.name),
+        depth: 0,
+        count: gt.filter(keep).length
+      });
+      gt.forEach((t, i) => {
+        if (!keep(t)) return;
+        push(t, false, pad2(i + 1));
+        if (withSubs) (t.subtasks || []).forEach((x, j) => keep(x) && push(x, true, pad2(i + 1) + '.' + pad2(j + 1)));
+      });
+    });
+    const pName = PROJECT_OPS.data && PROJECT_OPS.data.projectName || '';
+    const now = new Date();
+    const dateStr = pad2(now.getDate()) + '.' + pad2(now.getMonth() + 1) + '.' + now.getFullYear();
+    const listName = exportTitle || tx('סט התכניות למכרז');
+    const LX = window.ListExport;
+    return {
+      count,
+      model: {
+        title: pName || listName,
+        date: dateStr,
+        subtitle: [listName, tx('סטטוס דאשבורד'), tx('{n} מסמכים', {
+          n: count
+        })].filter(Boolean).join('  ·  '),
+        sheetName: tx('סטטוס דאשבורד'),
+        rtl: !IS_LTR(),
+        fileName: LX ? LX.safeFileName((pName ? pName + ' - ' : '') + listName + ' - ' + dateStr) : listName,
+        emptyText: tx('אין משימות להצגה'),
+        pageLabel: tx('עמוד {p} מתוך {n}'),
+        columns: xc.map(c => ({
+          label: c.custom ? c.label : tx(c.label),
+          kind: c.kind
+        })),
+        rows
+      }
+    };
+  };
   /* every cell edits in place, like the list: the same cells, saved through onUpdate (a document or a floor) */
   const cell = (c, t, isSub) => {
     if (canEdit) switch (c.id) {
@@ -10038,7 +10192,20 @@ function DrawSetDashboard({
     }
   }), tx(s.label)))), h("div", {
     className: "ds-dash-tools"
-  }, parents.length > 0 && h("button", {
+  }, window.ListExport && h("button", {
+    className: 'btn-tb' + (exportOpen ? ' on' : ''),
+    onClick: () => setExportOpen(true),
+    title: "ייצוא הדאשבורד ל־Excel או ל־PDF"
+  }, "⤓ ייצוא"), exportOpen && window.ListExport && h(window.ListExport.Dialog, {
+    columns: xCols,
+    build: buildExport,
+    prefsKey: 'ph-ds-dash-export',
+    defaults: {
+      subtasks: true,
+      colors: true
+    },
+    onClose: () => setExportOpen(false)
+  }), parents.length > 0 && h("button", {
     className: "btn-tb",
     onClick: () => setAll(!allOpen)
   }, allOpen ? "סגור הכול" : "פתח הכול"), canEdit && h("div", {
@@ -10800,7 +10967,9 @@ function DrawSetView({
     canEdit,
     onUpdate: updateAny,
     onMove: moveDoc,
-    reviewCell: cells.dsReview
+    reviewCell: cells.dsReview,
+    exportText: cells.exportText,
+    exportTitle: cells.exportTitle
   })) : h(ExtraCellsCtx.Provider, {
     value: cells
   }, h(SectionBadgeCtx.Provider, {
