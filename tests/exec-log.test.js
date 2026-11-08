@@ -299,6 +299,17 @@ test('the log screen is the planning list over the execlog sheet, with CONT amon
   assert.match(html, /extraCells&&extraCells\.__namePrefix&&extraCells\.__namePrefix\(task\)/);
 });
 
+test('change requests: a side-panel section on log tasks, and ויתורים ושינויים lists marked log tasks', () => {
+  assert.match(html, /const TaskSidebarExtraCtx=React\.createContext\(null\)/);
+  assert.match(fnBody('TaskDetailSidebar'), /useContext\(TaskSidebarExtraCtx\)/);
+  const ex = fnBody('ExecutionView').split('/* ══ ויתורים ושינויים')[0];
+  assert.match(ex, /TaskSidebarExtraCtx\.Provider,\{value:exChangeSectionFor\}/);
+  const chg = html.slice(html.indexOf('function ExChangesView('), html.indexOf('/* ══ לוח גמרים'));
+  assert.ok(chg.includes('execLogTasks(data).filter(t=>t.exChange)'));
+  assert.ok(!chg.includes('execItems') && !chg.includes('ExecItemPanel') && !chg.includes('ExNewItemDialog'));
+  assert.match(chg, /h\(ExTaskPanel,/);
+});
+
 test('every task collector takes only list sheets, so the execlog sheet stays out', () => {
   for (const name of ['MyTasksView', 'searchItemsOf', 'TracksGanttPanel', 'DashboardView', 'runAutomations', 'QuickUpdate', 'InboxPanel', 'OverviewPage'])
     assert.match(fnBody(name), /type ?=== ?'list'/, name);
