@@ -131,6 +131,131 @@ test('change mark: set, decide (final closes), reopen', () => {
   assert.strictEqual(L.execSetChange(t, null).exChange, undefined);
 });
 
+/* ── migration of doc.execItems (the old model) ── */
+const DISCS = [{ id: 'ARCH', label: 'ARCH', full: 'אדריכל' }, { id: 'STRC', label: 'STRC', full: 'קונסטרוקטור' }, { id: 'ELEC', label: 'ELEC', full: 'חשמל' }, { id: 'PM', label: 'PM', full: 'ניהול פרויקט' }];
+const R = (id, at, party, name, body, ballTo, kind, more = {}) => ({ id, at, party, name, body, files: [], ballTo, kind, ...more });
+const BH = (party, name, from) => ({ id: 'b' + from, party, name, from });
+const oldDoc = () => ({
+  tracks: [{ id: 'execution', trackValue: 'execution' }],
+  sheets: [{ id: 's1', type: 'list', track: 'ongoing', tasks: [] }],
+  execSeq: { rfi: 3, issue: 1, submittal: 1, change: 1 },
+  finishes: [{ id: 'f1', submittalId: 'sub1', changeId: 'chg1' }],
+  execItems: [
+    { id: 'rfi1', type: 'rfi', seq: 3, number: 'RFI-003', title: 'שרוולים', description: 'מה הקוטר?', status: 'answered', priority: 'high',
+      openedBy: { party: 'contractor', name: 'דנה' }, ball: { party: 'contractor', name: '' }, ownerId: 'st07', dueDate: '2026-09-25', discipline: 'STRC', specSection: '',
+      source: { kind: 'meeting', ref: 'm1' }, createdAt: '2026-09-16T09:00:00.000Z', closedAt: null, links: [{ kind: 'meeting', meetingId: 'm1', itemId: 'i1' }],
+      responses: [
+        R('r1', '2026-09-16T09:00:00.000Z', 'contractor', 'דנה', 'מה הקוטר?', { party: 'architect', name: '' }, 'open', { files: [{ id: 'fa', url: '/data/attachments/a.pdf', name: 'a.pdf' }] }),
+        R('r2', '2026-09-17T10:00:00.000Z', 'architect', 'שי', 'הועבר לקונסטרוקטור.', { party: 'consultant', name: 'קונסטרוקציה – אור פקרמן' }, 'reply'),
+        R('r3', '2026-09-23T12:00:00.000Z', 'consultant', 'קונסטרוקציה – אור פקרמן', 'שרוולים 6"', { party: 'architect', name: '' }, 'reply'),
+        R('r4', '2026-09-24T09:00:00.000Z', 'architect', 'שי', 'מאושר לפי הסקיצה.', { party: 'contractor', name: '' }, 'answer')],
+      revisions: [], ballHistory: [BH('architect', '', '2026-09-16T09:00:00.000Z'), BH('consultant', 'קונסטרוקציה – אור פקרמן', '2026-09-17T10:00:00.000Z'), BH('architect', '', '2026-09-23T12:00:00.000Z'), BH('contractor', '', '2026-09-24T09:00:00.000Z')] },
+    { id: 'iss1', type: 'issue', seq: 1, number: 'ISS-001', title: 'רטיבות', description: '', status: 'resolved', openedBy: { party: 'supervisor', name: 'רון' }, ball: null, ownerId: '',
+      dueDate: '', discipline: 'ARCH', createdAt: '2026-09-08T12:00:00.000Z', closedAt: '2026-09-12T10:00:00.000Z',
+      responses: [R('i1', '2026-09-08T12:00:00.000Z', 'supervisor', 'רון', 'כתמי רטיבות', { party: 'contractor', name: '' }, 'open'),
+        R('i2', '2026-09-12T10:00:00.000Z', 'architect', 'שי', 'תוקן', null, 'status', { status: 'resolved' })],
+      revisions: [], ballHistory: [BH('contractor', '', '2026-09-08T12:00:00.000Z'), BH(null, '', '2026-09-12T10:00:00.000Z')] },
+    { id: 'sub1', type: 'submittal', seq: 1, number: 'SUB-001', title: 'HPL', description: 'שופ', status: 'rejected', openedBy: { party: 'contractor', name: 'דנה' },
+      ball: { party: 'contractor', name: '' }, ownerId: 'st07', dueDate: '2026-10-17', discipline: 'ARCH', specSection: '09.12.010', createdAt: '2026-09-10T09:00:00.000Z', closedAt: null,
+      responses: [R('s1', '2026-09-10T09:00:00.000Z', 'contractor', 'דנה', 'שופ', { party: 'architect', name: '' }, 'open'),
+        R('s2', '2026-09-15T10:00:00.000Z', 'architect', 'שי', 'חסר פרט עיגון', null, 'decision'),
+        R('s3', '2026-09-24T09:00:00.000Z', 'contractor', 'דנה', 'הוסף פרט', { party: 'architect', name: '' }, 'revision'),
+        R('s4', '2026-09-29T11:00:00.000Z', 'architect', 'שי', 'הגוון לא תואם', null, 'decision')],
+      revisions: [{ id: 'ra', label: 'A', files: [{ id: 'fr', url: '/data/attachments/r.pdf', name: 'r.pdf' }], submittedAt: '2026-09-10T09:00:00.000Z', decision: 'rejected', decidedAt: '2026-09-15T10:00:00.000Z' },
+        { id: 'rb', label: 'B', files: [], submittedAt: '2026-09-24T09:00:00.000Z', decision: 'rejected', decidedAt: '2026-09-29T11:00:00.000Z' }],
+      ballHistory: [BH('architect', '', '2026-09-10T09:00:00.000Z'), BH('contractor', '', '2026-09-15T10:00:00.000Z'), BH('architect', '', '2026-09-24T09:00:00.000Z'), BH('contractor', '', '2026-09-29T11:00:00.000Z')] },
+    { id: 'chg1', type: 'change', seq: 1, number: 'CHG-001', title: 'Fundermax', description: 'החלפת יצרן', status: 'approved_cond', openedBy: { party: 'contractor', name: 'דנה' },
+      ball: null, ownerId: 'st07', dueDate: '2026-09-16', discipline: 'ARCH', createdAt: '2026-09-07T09:00:00.000Z', closedAt: '2026-09-22T11:00:00.000Z',
+      tenderSpec: 'Trespa', tenderRef: '09.1', proposed: 'Fundermax', approvedText: 'Fundermax 8 מ"מ',
+      responses: [R('c1', '2026-09-07T09:00:00.000Z', 'contractor', 'דנה', 'מציע Fundermax', { party: 'architect', name: '' }, 'open'),
+        R('c2', '2026-09-22T11:00:00.000Z', 'architect', 'שי', 'מאושר בתנאי', null, 'decision', { decision: 'approved_cond', approvedText: 'Fundermax 8 מ"מ' })],
+      revisions: [], ballHistory: [BH('architect', '', '2026-09-07T09:00:00.000Z'), BH(null, '', '2026-09-22T11:00:00.000Z')] }
+  ]
+});
+const byId = (doc, id) => L.execLogTasks(doc).find(t => t.id === id);
+const lastEv = t => t.events[t.events.length - 1];
+
+test('migration: one log sheet, task ids are the old item ids, old items kept as legacy', () => {
+  const d = L.execMigrateDoc(oldDoc(), DISCS);
+  const sh = L.execLogSheet(d);
+  assert.strictEqual(sh.id, 'exlog');
+  assert.strictEqual(sh.track, 'execution');
+  assert.deepStrictEqual(sh.tasks.map(t => t.id), ['rfi1', 'iss1', 'sub1', 'chg1']);
+  assert.strictEqual(d.execItems, undefined);
+  assert.strictEqual(d.execItemsLegacy.length, 4);
+  assert.deepStrictEqual(d.execSeq, { rfi: 3, issue: 1, submittal: 1, change: 1 });
+  assert.strictEqual(d.sheets.length, 2);
+});
+
+test('migration: fields and numbers carry over; a change becomes a marked general task', () => {
+  const d = L.execMigrateDoc(oldDoc(), DISCS);
+  const r = byId(d, 'rfi1');
+  assert.deepStrictEqual([r.exType, r.exNo, r.exSeq, r.title, r.description, r.discipline, r.priority, r.dueDate, r.createdAt], ['rfi', 'RFI-003', 3, 'שרוולים', 'מה הקוטר?', 'STRC', 'high', '2026-09-25', '2026-09-16']);
+  assert.deepStrictEqual(r.assigneeIds, ['st07']);
+  assert.deepStrictEqual(r.exSource, { kind: 'meeting', ref: 'm1' });
+  assert.deepStrictEqual(r.exLinks, [{ kind: 'meeting', meetingId: 'm1', itemId: 'i1' }]);
+  assert.deepStrictEqual(byId(d, 'iss1').assigneeIds, []);
+  const c = byId(d, 'chg1');
+  assert.deepStrictEqual([c.exType, c.exNo], ['general', 'CHG-001']);
+  assert.deepStrictEqual(c.exChange, { tenderSpec: 'Trespa', tenderRef: '09.1', proposed: 'Fundermax', approvedText: 'Fundermax 8 מ"מ', decision: 'approved_cond', decidedAt: '2026-09-22', decidedBy: 'שי' });
+  assert.strictEqual(byId(d, 'sub1').exSpec, '09.12.010');
+});
+
+test('migration: the thread becomes updates, ball follows the old ball', () => {
+  const d = L.execMigrateDoc(oldDoc(), DISCS);
+  const r = byId(d, 'rfi1');
+  assert.deepStrictEqual(r.events.map(e => [e.id, e.date, e.assignee]), [['ev-r1', '2026-09-16', 'ARCH'], ['ev-r2', '2026-09-17', 'STRC'], ['ev-r3', '2026-09-23', 'ARCH'], ['ev-r4', '2026-09-24', 'CONT']]);
+  assert.ok(r.events[1].note.includes('שי') && r.events[1].note.includes('הועבר לקונסטרוקטור.'));
+  assert.strictEqual(L.execBall(r, '2026-10-01'), 'CONT');
+  assert.strictEqual(lastEv(r).status, 'sent'); // answered → sent to the side that asked
+  assert.strictEqual(L.execTaskClosed(r), false);
+});
+
+test('migration: a consultant with no matching discipline keeps the ball on the item discipline and the name in the note', () => {
+  const doc = oldDoc();
+  const d = L.execMigrateDoc(doc, DISCS.filter(x => x.id !== 'STRC'));
+  const e = byId(d, 'rfi1').events[1];
+  assert.strictEqual(e.assignee, 'STRC'); // item.discipline
+  assert.ok(e.title.includes('אור פקרמן'));
+  const doc2 = oldDoc(); doc2.execItems[0].discipline = 'ARCH';
+  assert.strictEqual(byId(L.execMigrateDoc(doc2, []), 'rfi1').events[1].assignee, 'ARCH');
+  assert.strictEqual(L.execPartyDisc({ party: 'supervisor', name: 'רון' }, {}, DISCS), 'PM');
+  assert.strictEqual(L.execPartyDisc({ party: 'consultant', name: 'חשמל – גיל' }, {}, DISCS), 'ELEC');
+  assert.strictEqual(L.execPartyDisc({ party: '', name: '' }, {}, DISCS), 'ARCH');
+});
+
+test('migration: closed items end approved; a rejected submittal ends in comments with CONT, rounds counted', () => {
+  const d = L.execMigrateDoc(oldDoc(), DISCS);
+  const i = byId(d, 'iss1');
+  assert.strictEqual(L.execTaskClosed(i), true);
+  assert.strictEqual(lastEv(i).status, 'approved');
+  assert.strictEqual(lastEv(i).date, '2026-09-12');
+  const s = byId(d, 'sub1');
+  assert.deepStrictEqual([lastEv(s).status, lastEv(s).assignee], ['comments', 'CONT']);
+  assert.strictEqual(L.execRound(s), 2);
+  assert.strictEqual(s.events[0].round, 1);
+  assert.deepStrictEqual(s.attachments.map(a => a.url), ['/data/attachments/r.pdf']);
+  assert.deepStrictEqual(byId(d, 'rfi1').attachments.map(a => a.url), ['/data/attachments/a.pdf']);
+  assert.strictEqual(L.execTaskClosed(byId(d, 'chg1')), true);
+});
+
+test('migration is deterministic and idempotent', () => {
+  const a = L.execMigrateDoc(oldDoc(), DISCS), b = L.execMigrateDoc(oldDoc(), DISCS);
+  assert.deepStrictEqual(a, b);
+  assert.strictEqual(L.execMigrateDoc(a, DISCS), a);
+  const plain = { sheets: [] };
+  assert.strictEqual(L.execMigrateDoc(plain, DISCS), plain);
+});
+
+test('migration folds in an item a stale tab added after the move', () => {
+  const a = L.execMigrateDoc(oldDoc(), DISCS);
+  const late = { ...oldDoc().execItems[0], id: 'rfi9', seq: 4, number: 'RFI-004' };
+  const d = L.execMigrateDoc({ ...a, execItems: [late, oldDoc().execItems[1]] }, DISCS);
+  assert.deepStrictEqual(L.execLogTasks(d).map(t => t.id), ['rfi1', 'iss1', 'sub1', 'chg1', 'rfi9']);
+  assert.strictEqual(d.execItemsLegacy.length, 5);
+  assert.strictEqual(d.execItems, undefined);
+});
+
 test('log sheet lookup', () => {
   const doc = { sheets: [{ id: 's1', type: 'list', tasks: [task()] }, { id: 'exlog', type: 'execlog', track: 'execution', tasks: [task({ id: 'k' })] }] };
   assert.strictEqual(L.EXEC_LOG_SHEET_ID, 'exlog');

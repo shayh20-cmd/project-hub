@@ -4483,6 +4483,47 @@ function execDecideChangeT(t,d,today){const day=today||exToday();const cur=t.exC
   const add=st=>[...(t.events||[]),{id:uid(),status:st,assignee:'ARCH',date:day,title:lbl,note:d.notes||'',countDays:true}];
   const events=fin?add('approved'):execTaskClosed(t,day)?add('progress'):(t.events||[]);
   return{...t,exChange,events};}
+/* ── migration: doc.execItems (the old item model) → tasks of the log sheet. Pure, deterministic and
+   idempotent (the page's migrateData and mcp.js both run it on read); task ids = item ids so meeting rows,
+   finishes and Outlook links keep pointing at the same thing; the old items stay in doc.execItemsLegacy. ── */
+/* an old party {party,name} → who holds the ball in the new model; discs = [{id,label,full}] */
+function execPartyDisc(b,item,discs){const p=b&&b.party;if(p==='contractor')return'CONT';if(p==='supervisor')return'PM';if(p!=='consultant')return'ARCH';
+  const nm=String(b.name||'').split(/\s[–-]\s/)[0].trim();const w=nm.split(/\s+/)[0]||'';const stem=w.slice(0,4);
+  const hit=(discs||[]).find(d=>d.id===nm||d.id===w||(stem.length>=3&&[d.label,d.full].filter(Boolean).join(' ').split(/\s+/).some(x=>x.startsWith(stem))));
+  if(hit)return hit.id;const fd=item&&item.discipline;return fd&&fd!=='ARCH'?fd:'ARCH';}
+function exMigrateItem(it,discs){
+  const day=x=>String(x||'').slice(0,10);const disc=b=>execPartyDisc(b,it,discs);
+  const hist=(it.ballHistory||[]).slice().sort((a,b)=>String(a.from).localeCompare(String(b.from)));
+  const ballAt=at=>{let b=null;for(const h of hist){if(String(h.from)<=String(at))b=h;else break;}return b&&b.party?b:null;};
+  const revs=it.revisions||[];const rs=it.responses||[];const closed=execIsClosed(it);
+  const roundAt=at=>revs.filter(v=>String(v.submittedAt||'')<=String(at)).length;
+  const stLabel=id=>(((EXEC_TYPES[it.type]||{}).statuses||[]).find(x=>x.id===id)||{}).label||'';
+  const events=rs.map(r=>{const b=r.ballTo&&r.ballTo.party?r.ballTo:ballAt(r.at);
+    const rd=revs.find(v=>v.decidedAt&&v.decidedAt===r.at);const dec=r.decision||(rd&&rd.decision);
+    const assignee=b?disc(b):disc({party:r.party,name:r.name});
+    const status=!b?'approved':dec==='rejected'?'comments':assignee==='ARCH'?'progress':'sent';
+    const note=[r.name,r.body].filter(x=>String(x||'').trim()).join(': ');
+    return{id:'ev-'+r.id,status,assignee,date:day(r.at),title:(b&&b.name)||(!b?stLabel(r.status||it.status):''),note,countDays:true,...(it.type==='submittal'&&roundAt(r.at)?{round:roundAt(r.at)}:{})};});
+  if(!events.length)events.push({id:'ev-'+it.id,status:closed?'approved':it.ball&&disc(it.ball)!=='ARCH'?'sent':'progress',assignee:it.ball?disc(it.ball):'ARCH',date:day(it.createdAt),title:'',note:'',countDays:true});
+  const last=()=>events[events.length-1];
+  if(closed&&last().status!=='approved')events.push({id:'ev-'+it.id+'-end',status:'approved',assignee:'ARCH',date:day(it.closedAt)||last().date,title:stLabel(it.status),note:'',countDays:true});
+  if(!closed){if(last().status==='approved')events.push({id:'ev-'+it.id+'-open',status:'progress',assignee:'ARCH',date:last().date,title:stLabel(it.status),note:'',countDays:true});
+    const l={...last()};if(it.ball&&it.ball.party)l.assignee=disc(it.ball);
+    if(it.type==='rfi'&&it.status==='answered')l.status='sent';else if(it.type==='issue'&&it.status==='in_progress')l.status='progress';else if(it.type==='submittal'&&it.status==='rejected'){l.status='comments';l.assignee='CONT';}
+    events[events.length-1]=l;}
+  const seen=new Set();const attachments=[...revs.flatMap(v=>v.files||[]),...rs.flatMap(r=>r.files||[])].filter(f=>f&&!seen.has(f.id)&&seen.add(f.id)).map(f=>({id:f.id,name:f.name||'',url:f.url||''}));
+  const decR=rs.filter(r=>r.kind==='decision').slice(-1)[0];
+  return{id:it.id,title:it.title||'',description:it.description||'',exType:it.type==='change'?'general':it.type,exSeq:it.seq||0,exNo:it.number||'',
+    discipline:it.discipline||'',priority:it.priority||'',dueDate:it.dueDate||'',createdAt:day(it.createdAt),assigneeIds:it.ownerId?[it.ownerId]:[],
+    ...(it.createdById?{createdById:it.createdById}:{}),...(it.source?{exSource:it.source}:{}),...((it.links||[]).length?{exLinks:it.links}:{}),...(it.specSection?{exSpec:it.specSection}:{}),
+    exOpenedBy:it.openedBy||null,...(it.closedAt?{closedAt:it.closedAt}:{}),
+    ...(it.type==='change'?{exChange:{tenderSpec:it.tenderSpec||'',tenderRef:it.tenderRef||'',proposed:it.proposed||'',approvedText:it.approvedText||'',decision:it.status||'requested',decidedAt:closed?day(it.closedAt||(decR&&decR.at)):'',decidedBy:closed&&decR?decR.name||'':''}}:{}),
+    subtasks:[],events,attachments};}
+function execMigrateDoc(doc,discs){const items=doc&&doc.execItems;if(!Array.isArray(items)||!items.length)return doc;
+  const sh=execLogSheet(doc);const have=new Set(((sh&&sh.tasks)||[]).map(t=>t.id));const fresh=items.filter(i=>!have.has(i.id));
+  const sheet={...(sh||{id:EXEC_LOG_SHEET_ID,type:'execlog',track:'execution',name:'יומן ביצוע',groups:[]}),tasks:[...((sh&&sh.tasks)||[]),...fresh.map(i=>exMigrateItem(i,discs))]};
+  const sheets=sh?(doc.sheets||[]).map(x=>x===sh?sheet:x):[...(doc.sheets||[]),sheet];
+  const{execItems,...rest}=doc;return{...rest,sheets,execItemsLegacy:[...(doc.execItemsLegacy||[]),...fresh]};}
 /* ═══ /exec-logic ═══ */
 /* ═══ meeting-logic ═══ */
 /* Meeting summaries: topics (sections) hold items; an item with parentId is a sub-item.
