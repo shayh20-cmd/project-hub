@@ -3387,6 +3387,16 @@ Object.assign(HE_EN, {
 "תיקייה ראשית": "Main folder",
 "תיקיית תאריך": "Date folder",
 "התיקייה שנבחרה לא בתוך {b}": "The chosen folder is not inside {b}",
+"סטטוס דאשבורד": "Status dashboard",
+"שדות בדאשבורד": "Dashboard fields",
+"ימי עבודה נדרשים": "Working days needed",
+"הספירה התחילה ב-{d}": "Count started on {d}",
+"הספירה תתחיל כשהסטטוס יעבור לבעבודה": "The count starts when the status changes to In work",
+"שדה חדש נוסף כבוי בכל המבטים — הדלק אותו כאן במבט שבו תרצה אותו": "A new field starts off in every view — turn it on here in the view where you want it",
+"מס׳": "No.",
+"גרור כדי לשנות את הסדר": "Drag to reorder",
+"פתח הכול": "Expand all",
+"סגור הכול": "Collapse all",
 "יח\"ד": "units",
 "מיטות": "beds",
 "כיתות": "classrooms",
@@ -4066,6 +4076,8 @@ Object.assign(HE_EN, {
   "נפתח ע״י": "Opened by",
   "מקור: {s}": "Source: {s}",
   "— ללא —": "— None —",
+"ייצוא הדאשבורד ל־Excel או ל־PDF": "Export the dashboard to Excel or PDF",
+"לחץ כדי לשנות את השם": "Click to rename",
 });
 
 window.I18N_HE_EN = HE_EN;
