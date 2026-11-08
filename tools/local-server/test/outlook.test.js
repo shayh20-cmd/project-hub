@@ -456,18 +456,20 @@ test('outlook: an execution item is opened on a yes, with the email\'s files on 
   assert.strictEqual(r.status, 200);
   const made = (await r.json()).created;
   assert.match(made.number, /^SUB-/);
-  let it = doc().execItems[0];
-  assert.deepStrictEqual([it.type, it.title, it.openedBy.party, it.openedBy.name], ['submittal', 'דוגמאות ריצוף לובי', 'contractor', 'א.ב. בנייה']);
+  // the item is a task of the execution log sheet
+  const logOf = () => (doc().sheets.find(s => s.type === 'execlog') || { tasks: [] }).tasks;
+  let it = logOf()[0];
+  assert.deepStrictEqual([it.exType, it.title, it.exOpenedBy.party, it.exOpenedBy.name], ['submittal', 'דוגמאות ריצוף לובי', 'contractor', 'א.ב. בנייה']);
   assert.match(it.description, /מהמייל: א\.ב\. בנייה · הגשת דוגמאות ריצוף · 2026-10-22/);
 
-  // its files: on the opening message and on the first round
+  // its files go on the task
   const up = await fetch(base + '/api/outlook/upload?' + new URLSearchParams({ project: 'ph01', exec: made.id, name: 'catalog.pdf' }), { method: 'POST', headers: { Authorization: 'Bearer ' + shay, 'Content-Type': 'application/octet-stream' }, body: '%PDF-1.4' });
   assert.strictEqual(up.status, 200);
-  it = doc().execItems[0];
-  assert.deepStrictEqual([it.responses[0].files.map(f => f.name), it.revisions[0].files.map(f => f.name)], [['catalog.pdf'], ['catalog.pdf']]);
+  it = logOf()[0];
+  assert.deepStrictEqual(it.attachments.map(f => f.name), ['catalog.pdf']);
 
   // closed to someone else; a task and an item at once is refused
   assert.strictEqual((await post(assaf, '/api/outlook/exec', { mail, projectId: 'ph01', item: { type: 'rfi', title: 'שאלה' } })).status, 400);
-  assert.strictEqual(doc().execItems.length, 1);
+  assert.strictEqual(logOf().length, 1);
   assert.strictEqual((await fetch(base + '/api/outlook/upload?' + new URLSearchParams({ project: 'ph01', exec: made.id, task: 't', name: 'a.pdf' }), { method: 'POST', headers: { Authorization: 'Bearer ' + shay }, body: '%PDF' })).status, 400);
 });

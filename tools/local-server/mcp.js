@@ -235,8 +235,9 @@ module.exports = function createMcp(ctx) {
 
   /* ── writing: one synchronous read → change → write, then the page merges it ── */
   function writeProject(proj, me, mutate) {
-    const doc = readJson(proj.file);
-    if (!doc || !doc.sheets) throw new ToolError('The project could not be read');
+    const raw = readJson(proj.file);
+    if (!raw || !raw.sheets) throw new ToolError('The project could not be read');
+    const doc = migratedExec(raw);
     const out = mutate(doc);
     const next = { ...doc, _ts: Date.now(), _by: me.name + ' · Claude' };
     if (ctx.beforeProjectWrite) { try { ctx.beforeProjectWrite(proj.file, readJson(proj.file), next, me.name + ' (Claude)'); } catch (e) {} }
@@ -346,7 +347,7 @@ module.exports = function createMcp(ctx) {
   }
   const putTask = (doc, sheetId, n) => { doc.sheets = doc.sheets.map(sh => sh.id === sheetId ? { ...sh, tasks: sh.tasks.map(x => x.id === n.id ? n : x) } : sh); };
 
-  /* ── the execution track (doc.execItems, doc.finishes), with the page's own exec-logic so
+  /* ── the execution track (the execlog sheet's tasks, doc.finishes), with the page's own exec-logic so
      numbers, ball handoffs and statuses behave exactly as on the screen. In trial: only the
      page's EXEC_TRIAL_USERS see these tools. ── */
   let execLib = null;
@@ -358,21 +359,25 @@ module.exports = function createMcp(ctx) {
     const html = fs.readFileSync(file, 'utf8');
     const m = html.match(/\/\* ═══ exec-logic ═══ \*\/([\s\S]*?)\/\* ═══ \/exec-logic ═══ \*\//);
     if (!m) throw new ToolError('could not read the execution logic from the page');
-    const L = new Function('uid', m[1] + '\nreturn {EXEC_TYPES,EXEC_PARTIES,execIsClosed,execNewItem,execBumpSeq,execRespond,execAddRevision,execDecide,execDecideChange,execSetStatus,execWaiting,execBallDays,execPartyLabel,execAddWorkdays,finishStatus,finishFromSubmittal,finishNoteForChange,finishUnlinkItem,FINISH_ZONES,finishZone,finishCat};')(uid);
+    /* a name the page does not define comes back undefined (an older page, a test stub) */
+    const EXEC_NAMES = 'EXEC_TYPES,EXEC_PARTIES,execIsClosed,execPartyLabel,execAddWorkdays,finishStatus,finishNoteForChange,FINISH_ZONES,finishZone,finishCat,EXT_TYPES,EXT_CHANGE_DECISIONS,execLogSheet,execLogTasks,exChrono,exLatest,execTaskClosed,execNewTask,execBumpSeqT,execBall,execWaitingT,execRound,execSetChange,execDecideChangeT,execPartyDisc,execMigrateDoc,execItemView,finishFromSubmittalT,finishApplyChange,EXEC_LOG_SHEET_ID,EXEC_LOG_GROUPS'.split(',');
+    const L = new Function('uid', m[1] + '\nreturn {' + EXEC_NAMES.map(k => k + ':typeof ' + k + "==='undefined'?undefined:" + k).join(',') + '};')(uid);
+    const fn = html.match(/DISCIPLINE_FULL_NAMES=(\{[^}]*\})/);
     const tr = html.match(/const EXEC_TRIAL_USERS = (\[[^\]]*\]);/);
     const due = html.match(/const EX_DUE_WORKDAYS=(\{[^}]*\});/);
-    execLib = { mtime: st.mtimeMs, L, trial: tr ? Function('"use strict";return (' + tr[1] + ')')() : null, dueDays: due ? Function('"use strict";return (' + due[1] + ')')() : {} };
+    execLib = { mtime: st.mtimeMs, L, fullNames: fn ? Function('"use strict";return (' + fn[1] + ')')() : {}, trial: tr ? Function('"use strict";return (' + tr[1] + ')')() : null, dueDays: due ? Function('"use strict";return (' + due[1] + ')')() : {} };
     return execLib;
   }
   // null trial list = the track is open to everyone
   const canExec = me => { const t = execLogic().trial; return !t || t.includes(me.id); };
   function execGate(me) { if (!canExec(me)) throw new ToolError('The execution track (מסלול ביצוע) is not open to you yet.'); return execLogic().L; }
-  const EXEC_TYPE_IDS = ['issue', 'rfi', 'submittal', 'change'];
+  /* the log: tasks of the project's execlog sheet. "change" is a General task marked as a change request. */
+  const EXEC_TYPE_IDS = ['issue', 'rfi', 'submittal', 'general', 'change'];
   function pickExecType(L, ref) {
     if (!ref) return null;
     const r = norm(ref);
     const hit = EXEC_TYPE_IDS.find(k => k === r || norm(L.EXEC_TYPES[k].prefix) === r || norm(L.EXEC_TYPES[k].label) === r);
-    if (!hit) throw new ToolError(`Unknown item type "${ref}". Types: issue (ISS), rfi (RFI), submittal (SUB, הגשה), change (CHG, שינוי / ויתור)`);
+    if (!hit) throw new ToolError(`Unknown item type "${ref}". Types: issue (ISS), rfi (RFI), submittal (SUB, הגשה), general (GEN, כללי), change (a change / waiver request, שינוי / ויתור)`);
     return hit;
   }
   function pickParty(L, b, what) {
@@ -383,6 +388,7 @@ module.exports = function createMcp(ctx) {
     if (!hit) throw new ToolError(`Unknown ${what || 'party'} "${o.party}". Parties: ` + L.EXEC_PARTIES.map(p => p.id + ' (' + p.label + ')').join(', '));
     return { party: hit.id, name: String(o.name || '').trim() };
   }
+  /* an old item status (id or label) — for decisions on submittals and change requests */
   function pickExecStatus(L, type, ref) {
     const sts = L.EXEC_TYPES[type].statuses;
     const r = norm(ref);
@@ -390,35 +396,66 @@ module.exports = function createMcp(ctx) {
     if (!hit) throw new ToolError(`Unknown status "${ref}" for ${L.EXEC_TYPES[type].label}. Statuses: ` + sts.map(s => s.id + ' (' + s.label.replace(/⁠/g, '') + ')').join(', '));
     return hit.id;
   }
+  /* the update statuses of the planning list; the old Issue / RFI statuses are understood too */
+  const EV_LABELS = { progress: 'בעבודה', sent: 'נשלח', comments: 'יש הערות', approved: 'מאושר', update: 'עדכון', missing: 'חסר' };
+  const OLD_TO_EV = { open: 'progress', pending: 'progress', in_progress: 'progress', answered: 'sent', resolved: 'approved', closed: 'approved' };
+  function pickEvStatus(L, ref) {
+    const r = norm(ref);
+    const ev = Object.keys(EV_LABELS).find(k => k === r || norm(EV_LABELS[k]) === r);
+    if (ev) return ev;
+    for (const t of ['issue', 'rfi']) { const s = L.EXEC_TYPES[t].statuses.find(x => x.id === r || norm(x.label) === r); if (s) return OLD_TO_EV[s.id]; }
+    throw new ToolError(`Unknown status "${ref}". Statuses: progress (בעבודה), sent (נשלח), comments (יש הערות), approved (מאושר — closes it)`);
+  }
+  const execDiscs = (doc, reg) => { const full = execLogic().fullNames || {}; return (projList(doc, 'disciplines', reg) || []).map(d => ({ ...d, full: full[d.id] || '' })); };
+  /* the converted document (a no-op once converted); reads never write it, the next write does */
+  function migratedExec(doc) { try { return execLogic().L.execMigrateDoc(doc, execDiscs(doc, readJson(REGISTRY))); } catch (e) { return doc; } }
   function findExec(doc, ref, L) {
-    const items = doc.execItems || [];
+    const tasks = L.execLogTasks(doc);
     const r = String(ref || '').trim();
     const num = r.toUpperCase().replace(/\s+/g, '');
-    let hit = items.find(i => i.id === r) || items.find(i => i.number === num);
-    if (!hit) { const mm = num.match(/^([A-Z]+)-?(\d+)$/); if (mm) hit = items.find(i => L.EXEC_TYPES[i.type] && L.EXEC_TYPES[i.type].prefix === mm[1] && i.seq === +mm[2]); }
+    let hit = tasks.find(t => t.id === r) || tasks.find(t => t.exNo === num);
+    if (!hit) { const mm = num.match(/^([A-Z]+)-?(\d+)$/); if (mm) hit = tasks.find(t => String(t.exNo || '').startsWith(mm[1] + '-') && t.exSeq === +mm[2]); }
     if (hit) return hit;
-    const loose = items.filter(i => r && bare(i.title).includes(bare(r)));
+    const loose = tasks.filter(t => r && bare(t.title).includes(bare(r)));
     if (loose.length === 1) return loose[0];
-    if (loose.length > 1) throw new ToolError(`"${ref}" matches ${loose.length} items: ` + loose.slice(0, 10).map(i => i.number + ' ' + i.title).join(' | ') + '. Pass the number.');
+    if (loose.length > 1) throw new ToolError(`"${ref}" matches ${loose.length} items: ` + loose.slice(0, 10).map(t => t.exNo + ' ' + t.title).join(' | ') + '. Pass the number.');
     throw new ToolError(`No execution item "${ref}" in this project. Use list_exec_items.`);
   }
-  const stLabel = (L, it) => ((L.EXEC_TYPES[it.type].statuses.find(s => s.id === it.status) || {}).label || it.status).replace(/⁠/g, '');
   const discLabel = (doc, c, id) => id ? ((projList(doc, 'disciplines', c.reg).find(o => o.id === id) || {}).label || id) : '';
   const priLabel = (doc, c, id) => id ? ((projList(doc, 'priorities', c.reg).find(o => o.id === id) || {}).label || id) : '';
-  function execBrief(doc, c, L, it, today) {
+  const ballLabel = (doc, c, id) => !id ? null : id === 'ARCH' ? 'אדריכל' : id === 'CONT' ? 'קבלן' : (execLogic().fullNames || {})[id] || discLabel(doc, c, id) || id;
+  /* the item's status in words: a change request's decision, else the latest update (or its closing title) */
+  function statusText(L, t, today) {
+    const ch = t.exChange;
+    if (ch) return ((L.EXT_CHANGE_DECISIONS.find(d => d.id === ch.decision) || {}).label || ch.decision);
+    const last = L.exLatest(t.events, today);
+    if (L.execTaskClosed(t, today)) return (last && last.title) || 'סגור';
+    return last ? (EV_LABELS[last.status] || last.status) : 'פתוח';
+  }
+  const stLabel = (L, v) => ((L.EXEC_TYPES[v.type].statuses.find(s => s.id === v.status) || {}).label || v.status).replace(/⁠/g, '');
+  function execBrief(doc, c, L, t, today) {
+    const ch = t.exChange;
     return {
-      id: it.id, number: it.number, type: it.type, title: it.title, status: stLabel(L, it), closed: L.execIsClosed(it),
-      ball: it.ball ? L.execPartyLabel(it.ball) : null, waiting_workdays: L.execWaiting(it, today) || 0,
-      due: it.dueDate || null, priority: priLabel(doc, c, it.priority) || undefined, discipline: discLabel(doc, c, it.discipline) || undefined, spec_section: it.specSection || undefined,
-      opened_by: L.execPartyLabel(it.openedBy), created: String(it.createdAt || '').slice(0, 10),
-      ...(it.type === 'submittal' ? { round: ((it.revisions || []).slice(-1)[0] || {}).label } : {}),
-      ...(it.type === 'change' ? { tender_spec: it.tenderSpec, tender_ref: it.tenderRef || undefined, proposed: it.proposed, approved_text: it.approvedText || undefined } : {})
+      id: t.id, number: t.exNo, type: t.exType, change_request: ch ? true : undefined, title: t.title, status: statusText(L, t, today), closed: L.execTaskClosed(t, today),
+      ball: ballLabel(doc, c, L.execBall(t, today)), waiting_workdays: L.execWaitingT(t, today),
+      due: t.dueDate || null, priority: priLabel(doc, c, t.priority) || undefined, discipline: discLabel(doc, c, t.discipline) || undefined, spec_section: t.exSpec || undefined,
+      opened_by: t.exOpenedBy && t.exOpenedBy.party ? L.execPartyLabel(t.exOpenedBy) : undefined, created: t.createdAt || '',
+      ...(t.exType === 'submittal' ? { round: L.execRound(t) || 1 } : {}),
+      ...(ch ? { tender_spec: ch.tenderSpec, tender_ref: ch.tenderRef || undefined, proposed: ch.proposed, approved_text: ch.approvedText || undefined } : {})
     };
   }
+  /* a task into the log sheet (made when missing) */
+  function putExecTask(L, doc, t) {
+    const sheet = L.execLogSheet(doc) || { id: L.EXEC_LOG_SHEET_ID, type: 'execlog', track: 'execution', name: 'יומן ביצוע', groups: L.EXEC_LOG_GROUPS.map(g => ({ ...g })), tasks: [] };
+    const has = (sheet.tasks || []).some(x => x.id === t.id);
+    const next = { ...sheet, tasks: has ? sheet.tasks.map(x => x.id === t.id ? t : x) : [...(sheet.tasks || []), t] };
+    doc.sheets = (doc.sheets || []).some(x => x.id === sheet.id) ? doc.sheets.map(x => x.id === sheet.id ? next : x) : [...(doc.sheets || []), next];
+  }
+  const addEvent = (t, ev) => ({ ...t, events: [...(t.events || []), { id: uid(), title: '', note: '', countDays: true, date: todayISO(), ...ev }] });
   const execLinkOf = (base, projId, itemId) => `${base}/project_hub_01?project=${encodeURIComponent(projId)}&exec=${encodeURIComponent(itemId)}`;
   const FINISH_FIELDS = { element: 'element', location: 'location', material: 'material', finish: 'finish', color: 'color', color_hex: 'colorHex', supplier: 'supplier', approved_at: 'approvedAt', approved_by: 'approvedBy', spec_section: 'specSection', notes: 'notes' };
   function finishBrief(doc, c, L, r) {
-    const items = doc.execItems || [];
+    const items = L.execLogTasks(doc).map(t => L.execItemView(t));
     const sub = r.submittalId ? items.find(i => i.id === r.submittalId) : null;
     const chg = r.changeId ? items.find(i => i.id === r.changeId) : null;
     return {
@@ -979,12 +1016,12 @@ module.exports = function createMcp(ctx) {
       name: 'list_exec_items',
       exec: true,
       title: 'Execution items',
-      description: 'The execution track (מסלול ביצוע) log of one project: Issues (ISS), RFIs, submittals (SUB, הגשות) and contractor change / waiver requests (CHG, ויתורים ושינויים) — number, status, who holds the ball and for how many working days. Open items only unless include_closed.',
+      description: 'The execution track (מסלול ביצוע) log of one project: Issues (ISS), RFIs, submittals (SUB, הגשות) and General tasks (GEN, כללי); any of them may be marked as a contractor change / waiver request (ויתורים ושינויים) — number, status, who holds the ball and for how many working days. Open items only unless include_closed.',
       inputSchema: {
         type: 'object',
         properties: {
           project: { type: 'string' },
-          type: { type: 'string', description: 'issue | rfi | submittal | change; omit for all' },
+          type: { type: 'string', description: 'issue | rfi | submittal | general | change (the marked change requests); omit for all' },
           query: { type: 'string', description: 'Words in the title or description' },
           include_closed: { type: 'boolean' }
         },
@@ -994,12 +1031,12 @@ module.exports = function createMcp(ctx) {
       run(args, c) {
         const L = execGate(c.me);
         const p = findProject(c.me, c.reg, args.project);
-        const doc = readJson(p.file);
+        const doc = migratedExec(readJson(p.file));
         const type = pickExecType(L, args.type);
         const today = todayISO();
-        const items = (doc.execItems || []).filter(i => (!type || i.type === type) && (args.include_closed || !L.execIsClosed(i))
-          && (!args.query || bare(i.title + ' ' + i.description + ' ' + (i.tenderSpec || '') + ' ' + (i.proposed || '')).includes(bare(args.query))));
-        items.sort((a, b) => (L.execWaiting(b, today) - L.execWaiting(a, today)) || (a.seq - b.seq));
+        const items = L.execLogTasks(doc).filter(t => (!type || (type === 'change' ? !!t.exChange : t.exType === type)) && (args.include_closed || !L.execTaskClosed(t, today))
+          && (!args.query || bare(t.title + ' ' + textOf(t.description) + ' ' + (t.exChange ? (t.exChange.tenderSpec || '') + ' ' + (t.exChange.proposed || '') : '')).includes(bare(args.query))));
+        items.sort((a, b) => (L.execWaitingT(b, today) - L.execWaitingT(a, today)) || ((a.exSeq || 0) - (b.exSeq || 0)));
         return { project: p.code + ' ' + p.name, today, count: items.length, items: items.map(i => execBrief(doc, c, L, i, today)) };
       }
     },
@@ -1007,22 +1044,21 @@ module.exports = function createMcp(ctx) {
       name: 'get_exec_item',
       exec: true,
       title: 'Execution item',
-      description: 'One execution item in full: description, the whole thread of replies (who wrote, who got the ball), submittal rounds (Rev A/B/C) with decisions, waiting days per party, linked tasks and finishes rows.',
+      description: 'One execution item in full: description, its updates in order (status, who got the ball, note; submittal round), the change request if it is one, and the finishes rows that link it.',
       inputSchema: { type: 'object', properties: { project: { type: 'string' }, item: { type: 'string', description: 'Number (RFI-004, SUB-2) or id' } }, required: ['project', 'item'], additionalProperties: false },
       annotations: { readOnlyHint: true, openWorldHint: false },
       run(args, c) {
         const L = execGate(c.me);
         const p = findProject(c.me, c.reg, args.project);
-        const doc = readJson(p.file);
+        const doc = migratedExec(readJson(p.file));
         const it = findExec(doc, args.item, L);
         const today = todayISO();
         return {
           project: p.code + ' ' + p.name,
           item: {
-            ...execBrief(doc, c, L, it, today), description: it.description,
-            thread: (it.responses || []).map(r => ({ at: String(r.at || '').slice(0, 10), kind: r.kind, by: L.execPartyLabel({ party: r.party, name: r.name }), text: r.body || undefined, ball_to: r.ballTo ? L.execPartyLabel(r.ballTo) : undefined, files: (r.files || []).length || undefined })),
-            rounds: it.type === 'submittal' ? (it.revisions || []).map(v => ({ rev: v.label, submitted: String(v.submittedAt || '').slice(0, 10), decision: v.decision ? stLabel(L, { type: 'submittal', status: v.decision }) : null, notes: v.notes || undefined, decided_by: v.decidedBy || undefined })) : undefined,
-            waiting_by_party: L.execBallDays(it, today).map(x => ({ party: L.execPartyLabel(x), workdays: x.days })),
+            ...execBrief(doc, c, L, it, today), description: textOf(it.description) || undefined,
+            updates: L.exChrono(it.events).map(e => ({ date: e.date, status: EV_LABELS[e.status] || e.status, to: ballLabel(doc, c, e.assignee), title: e.title || undefined, note: e.note || undefined, round: e.round || undefined })),
+            files: (it.attachments || []).length || undefined,
             finishes_rows: (doc.finishes || []).filter(r => r.submittalId === it.id || r.changeId === it.id).map(r => ({ id: r.id, element: r.element, material: r.material }))
           },
           link: execLinkOf(c.base, p.id, it.id)
@@ -1033,12 +1069,12 @@ module.exports = function createMcp(ctx) {
       name: 'create_exec_item',
       exec: true,
       title: 'Open an execution item',
-      description: 'Open a new Issue, RFI, submittal or contractor change / waiver request in a project\'s execution log. It gets the next official number. The office records every party\'s messages, so opened_by is who raised it (a contractor RFI is opened_by contractor). Confirm with the user before calling.',
+      description: 'Open a new Issue, RFI, submittal, General task or contractor change / waiver request in a project\'s execution log (a change request is a General task marked as one). It gets the next official number. opened_by is who raised it (a contractor RFI is opened_by contractor). Confirm with the user before calling.',
       inputSchema: {
         type: 'object',
         properties: {
           project: { type: 'string' },
-          type: { type: 'string', description: 'issue | rfi | submittal | change' },
+          type: { type: 'string', description: 'issue | rfi | submittal | general | change' },
           title: { type: 'string' },
           description: { type: 'string', description: 'The question / problem / what is submitted' },
           opened_by: PARTY_SCHEMA,
@@ -1061,25 +1097,22 @@ module.exports = function createMcp(ctx) {
         const type = pickExecType(L, args.type);
         checkDates(args.due_date);
         const res = writeProject(p, c.me, doc => {
-          const openedBy = pickParty(L, args.opened_by || { party: type === 'issue' ? 'architect' : 'contractor' }, 'opened_by') ;
-          const ballTo = args.ball_to ? pickParty(L, args.ball_to, 'ball_to') : { party: openedBy.party === 'architect' ? 'contractor' : 'architect', name: '' };
-          const now = new Date().toISOString();
+          const openedBy = pickParty(L, args.opened_by || { party: type === 'issue' || type === 'general' ? 'architect' : 'contractor' }, 'opened_by');
+          const ballP = args.ball_to ? pickParty(L, args.ball_to, 'ball_to') : { party: openedBy.party === 'architect' ? 'contractor' : 'architect', name: '' };
+          const today = todayISO();
           const dd = execLogic().dueDays[type];
-          const seqMap = doc.execSeq || {};
-          const it = {
-            ...L.execNewItem(doc.execItems || [], {
-              type, title: String(args.title).trim(), description: String(args.description || '').trim(), openedBy, ballTo,
-              dueDate: args.due_date || (dd ? L.execAddWorkdays(now.slice(0, 10), dd) : ''),
-              discipline: args.discipline ? pickOption(projList(doc, 'disciplines', c.reg), args.discipline, 'discipline') : '',
-              priority: args.priority ? pickOption(projList(doc, 'priorities', c.reg), args.priority, 'priority') : '',
-              specSection: args.spec_section || '', source: { kind: 'claude' },
-              tenderSpec: args.tender_spec, tenderRef: args.tender_ref, proposed: args.proposed
-            }, now, seqMap),
-            createdById: c.me.id
-          };
-          doc.execItems = [...(doc.execItems || []), it];
-          doc.execSeq = L.execBumpSeq(seqMap, it);
-          return execBrief(doc, c, L, it, todayISO());
+          const discipline = args.discipline ? pickOption(projList(doc, 'disciplines', c.reg), args.discipline, 'discipline') : '';
+          const ballTo = L.execPartyDisc(ballP, { discipline }, execDiscs(doc, c.reg));
+          let t = L.execNewTask(L.execLogTasks(doc), { type: type === 'change' ? 'general' : type, title: String(args.title).trim(), discipline, ownerId: c.me.id, ballTo,
+            dueDate: args.due_date || (dd ? L.execAddWorkdays(today, dd) : ''), source: { kind: 'claude' } }, doc.execSeq, today);
+          const description = String(args.description || '').trim();
+          t = { ...t, description, priority: args.priority ? pickOption(projList(doc, 'priorities', c.reg), args.priority, 'priority') : '', createdById: c.me.id, exOpenedBy: openedBy,
+            ...(args.spec_section ? { exSpec: String(args.spec_section) } : {}),
+            events: t.events.map(e => ({ ...e, status: ballTo === 'ARCH' ? 'progress' : 'sent', note: description })) };
+          if (type === 'change') t = L.execSetChange(t, { tenderSpec: String(args.tender_spec || ''), tenderRef: String(args.tender_ref || ''), proposed: String(args.proposed || '') });
+          putExecTask(L, doc, t);
+          doc.execSeq = L.execBumpSeqT(doc.execSeq, t);
+          return execBrief(doc, c, L, t, today);
         });
         return { project: p.code + ' ' + p.name, created: res, link: execLinkOf(c.base, p.id, res.id) };
       }
@@ -1088,7 +1121,7 @@ module.exports = function createMcp(ctx) {
       name: 'update_exec_item',
       exec: true,
       title: 'Update an execution item',
-      description: 'Record what happened on an execution item, the way the item panel does: a reply (optionally passing the ball), an RFI answer, closing or reopening, a manual status (Issue / RFI), a new submittal round, a decision on a submittal round or on a change request, and/or edits to its fields. Confirm with the user before calling.',
+      description: 'Record what happened on an execution item, as an update in its log (each update says who holds the ball now): a reply (optionally passing the ball), an RFI answer, closing or reopening, a status (progress / sent / comments / approved), a new submittal round, a decision on a submittal or on a change request, and/or edits to its fields. Confirm with the user before calling.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1098,7 +1131,7 @@ module.exports = function createMcp(ctx) {
           text: { type: 'string', description: 'The message / answer / decision notes' },
           by: { ...PARTY_SCHEMA, description: 'Who wrote it; default the architect (you)' },
           ball_to: { ...PARTY_SCHEMA, description: 'reply / answer / reopen: who must act next' },
-          status: { type: 'string', description: 'action status: the new status (id or Hebrew label)' },
+          status: { type: 'string', description: 'action status: progress (בעבודה) | sent (נשלח) | comments (יש הערות) | approved (מאושר — closes it)' },
           decision: { type: 'string', description: 'decide — submittal: approved | approved_notes | rejected; change: approved | approved_cond | rejected' },
           approved_text: { type: 'string', description: 'decide on a change: what was approved in practice (default: what was proposed)' },
           finish_row: { type: 'string', description: 'decide on an approved change: the finishes row it changes (id or words); it gets the change link and a "שונה לפי CHG-…" note' },
@@ -1123,65 +1156,85 @@ module.exports = function createMcp(ctx) {
         const res = writeProject(p, c.me, doc => {
           const cur = findExec(doc, args.item, L);
           let it = { ...cur };
+          const today = todayISO();
+          const discs = execDiscs(doc, c.reg);
+          const toDisc = b => L.execPartyDisc(b, it, discs);
           const by = args.by ? pickParty(L, args.by, 'by') : { party: 'architect', name: c.me.name };
           const ballTo = args.ball_to ? pickParty(L, args.ball_to, 'ball_to') : null;
           const text = String(args.text || '').trim();
+          const note = by.party === 'architect' || !text ? text : L.execPartyLabel(by) + ': ' + text;
           const done = [];
           // fields first, so a decision on a change uses the edited proposal
-          const set = (k, v, label) => { if (v != null && v !== it[k]) { it[k] = v; done.push(label); } };
+          const set = (k, v, label) => { if (v != null && v !== it[k]) { it = { ...it, [k]: v }; done.push(label); } };
           if (f.title != null) set('title', String(f.title).trim(), 'כותרת');
           if (f.description != null) set('description', String(f.description), 'תיאור');
           if (f.due_date != null) set('dueDate', f.due_date, 'תאריך יעד');
           if (f.discipline != null) set('discipline', f.discipline ? pickOption(projList(doc, 'disciplines', c.reg), f.discipline, 'discipline') : '', 'תחום');
           if (f.priority != null) set('priority', f.priority ? pickOption(projList(doc, 'priorities', c.reg), f.priority, 'priority') : '', 'עדיפות');
-          if (f.spec_section != null) set('specSection', String(f.spec_section), 'סעיף מפרט');
-          if (it.type === 'change') {
-            if (f.tender_spec != null) set('tenderSpec', String(f.tender_spec), 'במכרז');
-            if (f.tender_ref != null) set('tenderRef', String(f.tender_ref), 'סעיף מכרז');
-            if (f.proposed != null) set('proposed', String(f.proposed), 'מוצע');
-          } else if (['tender_spec', 'tender_ref', 'proposed'].some(k => f[k] != null)) throw new ToolError('tender_spec / tender_ref / proposed belong to change requests only');
+          if (f.spec_section != null) set('exSpec', String(f.spec_section), 'סעיף מפרט');
+          if (['tender_spec', 'tender_ref', 'proposed'].some(k => f[k] != null)) {
+            if (!it.exChange) throw new ToolError('tender_spec / tender_ref / proposed belong to change requests only');
+            const ch = { tender_spec: ['tenderSpec', 'במכרז'], tender_ref: ['tenderRef', 'סעיף מכרז'], proposed: ['proposed', 'מוצע'] };
+            for (const [k, [key, label]] of Object.entries(ch)) if (f[k] != null && String(f[k]) !== (it.exChange[key] || '')) { it = L.execSetChange(it, { [key]: String(f[k]) }); done.push(label); }
+          }
+          const closed = L.execTaskClosed(it, today);
+          const ball = L.execBall(it, today);
+          const isDecided = it.exType === 'submittal' || !!it.exChange;
           let finRow = null;
           const a = args.action;
-          if (a === 'reply' || a === 'answer' || a === 'close' || a === 'reopen') {
-            if (a === 'answer' && it.type !== 'rfi') throw new ToolError('answer is for RFIs; use reply');
-            if (a === 'close' && (it.type === 'submittal' || it.type === 'change')) throw new ToolError(`A ${L.EXEC_TYPES[it.type].label} closes by a decision: use action decide`);
-            if (a === 'close' && L.execIsClosed(it)) throw new ToolError(it.number + ' is already closed');
-            if (a === 'reopen' && !L.execIsClosed(it)) throw new ToolError(it.number + ' is open');
-            if ((a === 'reply' || a === 'answer') && !text) throw new ToolError('A ' + a + ' needs text');
-            it = L.execRespond(it, { kind: a, party: by.party, name: by.name, body: text, ballTo: a === 'reopen' ? (ballTo || { party: 'architect', name: '' }) : ballTo }, new Date().toISOString());
+          if (a === 'reply' || a === 'answer') {
+            if (a === 'answer' && it.exType !== 'rfi') throw new ToolError('answer is for RFIs; use reply');
+            if (!text) throw new ToolError('A ' + a + ' needs text');
+            const to = ballTo ? toDisc(ballTo) : a === 'answer' ? 'CONT' : (ball || 'ARCH');
+            it = addEvent(it, { status: a === 'answer' || to !== 'ARCH' ? 'sent' : 'progress', assignee: to, note, ...(it.exType === 'submittal' ? { round: L.execRound(it) || 1 } : {}) });
+            done.push(a);
+          } else if (a === 'close') {
+            if (isDecided) throw new ToolError(`${it.exNo} closes by a decision: use action decide`);
+            if (closed) throw new ToolError(it.exNo + ' is already closed');
+            it = addEvent(it, { status: 'approved', assignee: ball || 'ARCH', note });
+            done.push(a);
+          } else if (a === 'reopen') {
+            if (!closed) throw new ToolError(it.exNo + ' is open');
+            it = addEvent(it, { status: 'progress', assignee: ballTo ? toDisc(ballTo) : 'ARCH', note });
+            if (it.exChange) it = L.execSetChange(it, { decision: 'requested', approvedText: '', decidedAt: '', decidedBy: '' });
             done.push(a);
           } else if (a === 'status') {
-            if (it.type === 'submittal' || it.type === 'change') throw new ToolError(`A ${L.EXEC_TYPES[it.type].label} moves by rounds and decisions, not a manual status`);
+            if (isDecided) throw new ToolError(`${it.exNo} moves by rounds and decisions, not a manual status`);
             if (!args.status) throw new ToolError('Give the new status');
-            const next = L.execSetStatus(it, pickExecStatus(L, it.type, args.status), { name: c.me.name }, new Date().toISOString());
-            if (next !== it) { it = next; done.push('סטטוס'); }
+            const st = pickEvStatus(L, args.status);
+            it = addEvent(it, { status: st, assignee: ballTo ? toDisc(ballTo) : (ball || 'ARCH'), note });
+            done.push('סטטוס');
           } else if (a === 'new_revision') {
-            if (it.type !== 'submittal') throw new ToolError('new_revision is for submittals');
-            it = L.execAddRevision(it, { party: args.by ? by.party : 'contractor', name: args.by ? by.name : '', body: text }, new Date().toISOString());
+            if (it.exType !== 'submittal') throw new ToolError('new_revision is for submittals');
+            if (closed) throw new ToolError(it.exNo + ' is approved; reopen it first');
+            it = addEvent(it, { status: 'sent', assignee: 'ARCH', round: Math.max(1, L.execRound(it)) + 1, note: note || '' });
             done.push('סבב חדש');
           } else if (a === 'decide') {
             if (!args.decision) throw new ToolError('Give the decision');
-            if (it.type === 'submittal') {
-              const dec = pickExecStatus(L, 'submittal', args.decision);
-              if (dec === 'submitted') throw new ToolError('Decisions: approved, approved_notes, rejected');
-              const next = L.execDecide(it, { decision: dec, notes: text, name: c.me.name, ballTo }, new Date().toISOString());
-              if (next === it) throw new ToolError(`Rev ${((it.revisions || []).slice(-1)[0] || {}).label} of ${it.number} is already decided; a new decision needs a new round (new_revision)`);
-              it = next;
-            } else if (it.type === 'change') {
+            if (it.exChange) {
               const dec = pickExecStatus(L, 'change', args.decision);
               if (dec === 'requested' || dec === 'in_review') throw new ToolError('Decisions: approved, approved_cond, rejected');
               if (dec !== 'approved' && !text) throw new ToolError('A conditional approval or a rejection needs notes (text)');
-              if (L.execIsClosed(it)) throw new ToolError(it.number + ' is already decided; reopen it first');
-              it = L.execDecideChange(it, { decision: dec, approvedText: String(args.approved_text || '').trim(), notes: text, name: c.me.name }, new Date().toISOString());
+              if (closed) throw new ToolError(it.exNo + ' is already decided; reopen it first');
+              if (args.approved_text) it = L.execSetChange(it, { approvedText: String(args.approved_text).trim() });
+              it = L.execDecideChangeT(it, { decision: dec, notes: text, approvedText: String(args.approved_text || '').trim(), name: c.me.name }, today);
               if (args.finish_row && dec !== 'rejected') finRow = findFinish(doc, args.finish_row);
-            } else throw new ToolError('decide is for submittals and change requests; Issues / RFIs close with action close');
+            } else if (it.exType === 'submittal') {
+              const dec = pickExecStatus(L, 'submittal', args.decision);
+              if (dec === 'submitted') throw new ToolError('Decisions: approved, approved_notes, rejected');
+              const last = L.exLatest(it.events, today);
+              if (closed || (last && last.status === 'comments')) throw new ToolError(`${it.exNo} is already decided; a new decision needs a new round (new_revision)`);
+              const round = L.execRound(it) || 1;
+              it = dec === 'rejected' ? addEvent(it, { status: 'comments', assignee: 'CONT', title: 'נדחה – להגשה מחדש', note: text, round })
+                : addEvent(it, { status: 'approved', assignee: ball || 'ARCH', title: dec === 'approved_notes' ? 'אושר עם הערות' : 'אושר', note: text, round });
+            } else throw new ToolError('decide is for submittals and change requests; Issues / RFIs / General close with action close');
             done.push('החלטה');
           } else if (a) throw new ToolError('Unknown action ' + a);
           if (args.finish_row && !finRow) throw new ToolError('finish_row goes with deciding a change as approved / approved_cond');
           if (!done.length) throw new ToolError('Nothing to change: give an action and/or fields');
-          doc.execItems = (doc.execItems || []).map(x => x.id === it.id ? it : x);
-          if (finRow) doc.finishes = doc.finishes.map(r => r.id === finRow.id ? { ...r, changeId: it.id, notes: L.finishNoteForChange(r.notes, it.number, it.approvedText) } : r);
-          return { item: execBrief(doc, c, L, it, todayISO()), changed: done, finish_row: finRow ? finRow.id : undefined };
+          putExecTask(L, doc, it);
+          if (finRow) doc.finishes = L.finishApplyChange(doc.finishes.map(r => r.id === finRow.id ? { ...r, changeId: it.id } : r), it);
+          return { item: execBrief(doc, c, L, it, today), changed: done, finish_row: finRow ? finRow.id : undefined };
         });
         return { project: p.code + ' ' + p.name, updated: res.item, changed: res.changed, finish_row: res.finish_row, link: execLinkOf(c.base, p.id, res.item.id) };
       }
@@ -1196,7 +1249,7 @@ module.exports = function createMcp(ctx) {
       run(args, c) {
         const L = execGate(c.me);
         const p = findProject(c.me, c.reg, args.project);
-        const doc = readJson(p.file);
+        const doc = migratedExec(readJson(p.file));
         const text = r => [r.category, r.element, r.location, r.material, r.finish, r.color, r.supplier, r.notes, r.specSection].join(' ');
         const zone = args.zone ? pickZone(L, args.zone) : null;
         const rows = (doc.finishes || []).filter(r => (!zone || L.finishZone(r) === zone) && (!args.category || bare(L.finishCat(r)).includes(bare(args.category))) && (!args.query || bare(text(r)).includes(bare(args.query))));
@@ -1244,10 +1297,11 @@ module.exports = function createMcp(ctx) {
           if (isNew) {
             if (args.from_submittal) {
               const s = findExec(doc, args.from_submittal, L);
-              if (s.type !== 'submittal') throw new ToolError(s.number + ' is not a submittal');
+              if (s.exType !== 'submittal') throw new ToolError(s.exNo + ' is not a submittal');
               const dup = (doc.finishes || []).find(r => r.submittalId === s.id);
-              if (dup) throw new ToolError(`${s.number} already has a finishes row (${dup.id} ${dup.element}); change that row instead`);
-              row = L.finishFromSubmittal(s);
+              if (dup) throw new ToolError(`${s.exNo} already has a finishes row (${dup.id} ${dup.element}); change that row instead`);
+              if (!L.execTaskClosed(s)) throw new ToolError(s.exNo + ' is not approved yet');
+              row = L.finishFromSubmittalT(s);
             } else row = { id: uid(), zone: 'interior', category: '', element: '', location: '', material: '', finish: '', color: '', colorHex: '', supplier: '', approvedAt: '', approvedBy: '', files: [], image: null, submittalId: null, changeId: null, specSection: '', discipline: '', notes: '' };
           } else row = { ...findFinish(doc, args.row) };
           // a row from before the exterior / interior split is written in the new form
@@ -1259,7 +1313,8 @@ module.exports = function createMcp(ctx) {
           const link = (ref, type) => {
             if (ref === '') return null;
             const it = findExec(doc, ref, L);
-            if (it.type !== type) throw new ToolError(`${it.number} is not a ${type}`);
+            const ok = type === 'change' ? !!it.exChange : it.exType === type;
+            if (!ok) throw new ToolError(`${it.exNo} is not a ${type}`);
             return it.id;
           };
           if (args.submittal != null) row.submittalId = link(args.submittal, 'submittal');
@@ -1729,7 +1784,7 @@ document.querySelectorAll('input[type=file]').forEach(function(inp){inp.onchange
     try { lib = execLogic(); } catch (e) { return null; }
     if (lib.trial && !lib.trial.includes(me.id)) return null;
     return {
-      types: Object.entries(lib.L.EXEC_TYPES).map(([id, t]) => ({ id, label: t.label, prefix: t.prefix })),
+      types: EXEC_TYPE_IDS.map(id => ({ id, label: lib.L.EXEC_TYPES[id].label, prefix: lib.L.EXEC_TYPES[id].prefix })),
       parties: lib.L.EXEC_PARTIES.map(x => ({ id: x.id, label: x.label })),
       due_workdays: lib.dueDays || {}
     };
@@ -1743,13 +1798,10 @@ document.querySelectorAll('input[type=file]').forEach(function(inp){inp.onchange
     execGate(me);
     const p = findProject(me, reg, projectId);
     return writeProject(p, me, doc => {
-      const it = (doc.execItems || []).find(x => x.id === itemId);
+      const L = execLogic().L;
+      const it = L.execLogTasks(doc).find(x => x.id === itemId);
       if (!it) throw new ToolError('That execution item is no longer in the project');
-      const f = { id: uid(), url: saved.url, name: fileName };
-      const n = { ...it };
-      if ((n.responses || []).length) n.responses = n.responses.map((r, i) => i === 0 ? { ...r, files: [...(r.files || []), f] } : r);
-      if (n.type === 'submittal' && (n.revisions || []).length) n.revisions = n.revisions.map((r, i) => i === 0 ? { ...r, files: [...(r.files || []), f] } : r);
-      doc.execItems = doc.execItems.map(x => x.id === itemId ? n : x);
+      putExecTask(L, doc, { ...it, attachments: [...(it.attachments || []), { id: uid(), url: saved.url, name: fileName }] });
       return { id: itemId };
     });
   }
