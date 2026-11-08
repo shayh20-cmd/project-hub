@@ -4069,6 +4069,7 @@ Object.assign(HE_EN, {
 "חניה ממושכת": "Long stay",
 "אילוצים פיסיים": "Physical constraints",
 "ייצוא הדאשבורד ל־Excel או ל־PDF": "Export the dashboard to Excel or PDF",
+"לחץ כדי לשנות את השם": "Click to rename",
 });
 
 window.I18N_HE_EN = HE_EN;

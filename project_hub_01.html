@@ -853,7 +853,7 @@ html[data-status-icon="outline"] .st-sq[style*="pulse-delay"]{animation:pulse-fi
 .ds-dash-table td{padding:6px 12px;background:var(--surface);border-block:1px solid var(--border);vertical-align:middle;}
 .ds-dash-table td:last-child{border-inline-end:1px solid var(--border);border-start-end-radius:6px;border-end-end-radius:6px;}
 .ds-dash-name{white-space:nowrap;border-start-start-radius:6px;border-end-start-radius:6px;font-weight:600;}
-.ds-dash-title{display:inline-block;max-width:calc(100% - 130px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}
+.ds-dash-title{display:inline-block;max-width:calc(100% - 130px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;}.ds-dash-title.ed{cursor:text;border-bottom:1px dashed transparent;}.ds-dash-title.ed:hover{border-bottom-color:currentColor;}.ds-dash-title-in{width:calc(100% - 130px);box-sizing:border-box;font:inherit;color:inherit;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.75);border-radius:5px;padding:2px 6px;vertical-align:middle;outline:none;}.ds-dash-title-in:focus{background:rgba(255,255,255,.26);border-color:#fff;}
 .ds-dash-st,.ds-dash-st-ro{float:inline-end;margin-inline-start:8px;font:inherit;font-size:11px;font-weight:600;color:inherit;background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.45);border-radius:10px;padding:1px 6px;cursor:pointer;}
 .ds-dash-st option{color:var(--text);background:var(--surface);}
 .ds-dash-sub .ds-dash-name{padding-inline-start:30px;font-weight:500;opacity:.92;}
@@ -9689,6 +9689,8 @@ function DrawSetDashboard({
   }));
   /* a document without floors gets a faint "+" that opens a row for the first one, as in the list */
   const [addFor, setAddFor] = useState(null);
+  /* a click on a name edits it in place */
+  const [editId, setEditId] = useState(null);
   const startAdd = id => {
     setOpenIds(o => ({
       ...o,
@@ -10147,9 +10149,31 @@ function DrawSetDashboard({
         background: st.color,
         color: DS_ST_TEXT[st.id] || '#fff'
       }
-    }, h("span", {
-      className: "ds-dash-title",
-      "data-i18n-skip": ""
+    }, canEdit && editId === t.id ? h("input", {
+      className: "ds-dash-title-in",
+      defaultValue: t.title || '',
+      autoFocus: true,
+      "aria-label": "שם",
+      onFocus: e => e.target.select(),
+      onKeyDown: e => {
+        if (e.key === 'Enter') e.target.blur();else if (e.key === 'Escape') {
+          e.target.dataset.cancel = '1';
+          e.target.blur();
+        }
+      },
+      onBlur: e => {
+        const v = e.target.value.trim();
+        setEditId(null);
+        if (!e.target.dataset.cancel && v && v !== t.title) onUpdate({
+          ...t,
+          title: v
+        });
+      }
+    }) : h("span", {
+      className: "ds-dash-title" + (canEdit ? ' ed' : ''),
+      "data-i18n-skip": "",
+      title: canEdit ? 'לחץ כדי לשנות את השם' : undefined,
+      onClick: canEdit ? () => setEditId(t.id) : undefined
     }, t.title), nSubs > 0 && h("button", {
       className: 'sub-badge ds-dash-cnt' + (open ? ' open' : ''),
       onClick: () => toggleOpen(t.id),
