@@ -4445,6 +4445,44 @@ function execScheduleProgress(sc,today){
   const total=day(sc.end)-day(sc.start);const gone=Math.max(0,Math.min(total,day(today)-day(sc.start)));
   return{total,gone,left:Math.max(0,day(sc.end)-day(today)),started:today>=sc.start,over:today>sc.end};
 }
+/* ── the execution log as planning-style tasks: one sheet {type:'execlog', track:'execution'} per project.
+   Ball = the latest update's assignee (a discipline id, 'CONT' = contractor, 'ARCH' = us); closed = the
+   planning rule (an approved update, or a manual C). Self-contained: tests and mcp.js run this block alone. ── */
+const EXT_TYPES={issue:{prefix:'ISS',label:'Issue'},rfi:{prefix:'RFI',label:'RFI'},submittal:{prefix:'SUB',label:'הגשה'},general:{prefix:'GEN',label:'כללי'}};
+const EXEC_LOG_SHEET_ID='exlog';
+function execLogSheet(doc){return((doc&&doc.sheets)||[]).find(s=>s.type==='execlog')||null;}
+function execLogTasks(doc){const s=execLogSheet(doc);return(s&&s.tasks)||[];}
+const exToday=()=>new Date().toISOString().slice(0,10);
+/* copies of the page's evChrono / evCurrent / evCountStart (tests/exec-log.test.js proves they agree) */
+function exChrono(events){return(events||[]).map((e,i)=>({e,i})).sort((a,b)=>{const da=a.e.date||'',db=b.e.date||'';if(da!==db)return da<db?-1:1;if(b.e.followOf&&b.e.followOf===a.e.id)return-1;if(a.e.followOf&&a.e.followOf===b.e.id)return 1;return a.i-b.i;}).map(x=>x.e);}
+function exLatest(events,today){const t=today||exToday();const c=exChrono(events);for(let k=c.length-1;k>=0;k--)if((c[k].date||'')<=t)return c[k];return c[0]||null;}
+function exCountStart(events,today){const t=today||exToday();const c=exChrono(events).filter(e=>(e.date||'')<=t);for(let k=c.length-1;k>=0;k--)if(c[k].countDays!==false)return c[k];return c[c.length-1]||null;}
+/* = taskStatusEff(task)==='C' */
+function execTaskClosed(t,today){if(!t)return false;if(t.statusOverride)return t.statusId==='C';const l=exLatest(t.events,today);if(!l||!l.status)return t.statusId==='C';const map={progress:'I',sent:'I',comments:'R',approved:'C',missing:'N'};return(map[l.status]||t.statusId)==='C';}
+function execNextNo(tasks,type,seqMap){const p=EXT_TYPES[type].prefix;const seq=Math.max((seqMap&&seqMap[type])||0,0,...(tasks||[]).filter(t=>t.exType===type&&String(t.exNo||'').startsWith(p+'-')).map(t=>t.exSeq||0))+1;return{seq,no:p+'-'+String(seq).padStart(3,'0')};}
+function execBumpSeqT(seqMap,t){return{...(seqMap||{}),[t.exType]:Math.max((seqMap&&seqMap[t.exType])||0,t.exSeq||0)};}
+function execNewTask(tasks,o,seqMap,today){const d=today||exToday();const{seq,no}=execNextNo(tasks,o.type,seqMap);return{id:uid(),title:o.title||'',exType:o.type,exSeq:seq,exNo:no,discipline:o.discipline||'',assigneeIds:o.ownerId?[o.ownerId]:[],dueDate:o.dueDate||'',createdAt:d,...(o.source?{exSource:o.source}:{}),subtasks:[],events:[{id:uid(),status:'progress',assignee:o.ballTo||'ARCH',date:d,title:'',note:'',countDays:true}]};}
+function execBall(t,today){if(!t||execTaskClosed(t,today))return null;const l=exLatest(t.events,today);return l&&l.assignee||null;}
+function execWaitingT(t,today){if(!t||!(t.events||[]).length||execTaskClosed(t,today))return 0;const d=today||exToday();const s=exCountStart(t.events,d);return s?execWorkdays(s.date,d):0;}
+function execRound(t){return Math.max(0,...((t&&t.events)||[]).map(e=>+e.round||0));}
+function execCountsT(tasks,today){const d=today||exToday();const open=(tasks||[]).filter(t=>!execTaskClosed(t,d));const of=k=>open.filter(t=>t.exType===k);const rfi=of('rfi'),sub=of('submittal');const mine=open.filter(t=>execBall(t,d)==='ARCH');
+  return{rfiOpen:rfi.length,rfiLate:rfi.filter(t=>(t.dueDate&&t.dueDate<d)||execWaitingT(t,d)>EXEC_RFI_LATE).length,subPending:sub.length,subRound3:sub.filter(t=>execRound(t)>=3).length,
+    issuesLate:of('issue').filter(t=>execWorkdays(t.createdAt,d)>EXEC_ISSUE_LATE).length,mine:mine.length,mineAvg:mine.length?Math.round(mine.reduce((s,t)=>s+execWaitingT(t,d),0)/mine.length*10)/10:0};}
+function execBallSplitT(tasks,today){const out={ARCH:0,CONT:0,PM:0,consultants:0};(tasks||[]).forEach(t=>{const b=execBall(t,today);if(!b)return;if(b==='ARCH'||b==='CONT'||b==='PM')out[b]++;else out.consultants++;});return out;}
+function execForMeT(tasks,staffId,iManage,today){return(tasks||[]).filter(t=>{if(execBall(t,today)!=='ARCH')return false;const a=t.assigneeIds||(t.assigneeId?[t.assigneeId]:[]);return a.length?a.includes(staffId):!!iManage;});}
+/* a contractor change request is a mark on any log task (shown on ויתורים ושינויים) */
+const EXT_CHANGE_DECISIONS=[{id:'requested',label:'הוגשה'},{id:'in_review',label:'בבדיקה'},{id:'approved',label:'אושר'},{id:'approved_cond',label:'אושר בתנאי'},{id:'rejected',label:'נדחה'}];
+const EXT_CHANGE_FINAL=['approved','approved_cond','rejected'];
+const exChangeBlank=()=>({tenderSpec:'',tenderRef:'',proposed:'',approvedText:'',decision:'requested'});
+function execSetChange(t,patch){if(!patch){const{exChange,...rest}=t;return rest;}return{...t,exChange:{...(t.exChange||exChangeBlank()),...patch}};}
+/* a final decision closes the task with an approved update; going back to "requested" reopens it */
+function execDecideChangeT(t,d,today){const day=today||exToday();const cur=t.exChange||exChangeBlank();const dec=d.decision;const fin=EXT_CHANGE_FINAL.includes(dec);
+  const lbl=(EXT_CHANGE_DECISIONS.find(x=>x.id===dec)||{}).label||dec;
+  const approvedText=fin&&dec!=='rejected'?(d.approvedText||cur.approvedText||cur.proposed||''):'';
+  const exChange={...cur,decision:dec,approvedText,decidedAt:fin?day:'',decidedBy:fin?(d.name||''):''};
+  const add=st=>[...(t.events||[]),{id:uid(),status:st,assignee:'ARCH',date:day,title:lbl,note:d.notes||'',countDays:true}];
+  const events=fin?add('approved'):execTaskClosed(t,day)?add('progress'):(t.events||[]);
+  return{...t,exChange,events};}
 /* ═══ /exec-logic ═══ */
 /* ═══ meeting-logic ═══ */
 /* Meeting summaries: topics (sections) hold items; an item with parentId is a sub-item.
