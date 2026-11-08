@@ -281,6 +281,47 @@ test('log sheet lookup', () => {
   assert.deepStrictEqual(Object.keys(L.EXT_TYPES), ['issue', 'rfi', 'submittal', 'general']);
 });
 
+/* ── a log task as the old item shape, for meetings, finishes and My Tasks ── */
+const FX = (() => { const L2 = new Function('uid', m[1] + '\nreturn {execItemView,finishStatus,finishFromSubmittalT,finishApplyChange,execIsClosed,execPartyLabel};')(uid); return L2; })();
+
+test('item view: number, type, status, ball and links as the old screens read them', () => {
+  const sub = task({ id: 's', exType: 'submittal', exNo: 'SUB-002', exSeq: 2, title: 'ריצוף', events: [ev('a', '2026-10-04', 'sent', 'ARCH', { round: 1 }), ev('b', '2026-10-06', 'comments', 'CONT', { round: 2 })], exLinks: [{ kind: 'meeting', meetingId: 'm', itemId: 'i' }] });
+  const v = FX.execItemView(sub, '2026-10-11');
+  assert.deepStrictEqual([v.id, v.type, v.number, v.seq, v.title, v.status], ['s', 'submittal', 'SUB-002', 2, 'ריצוף', 'submitted']);
+  assert.deepStrictEqual(v.ball, { party: 'contractor', name: '' });
+  assert.strictEqual(FX.execPartyLabel(v.ball), 'קבלן');
+  assert.deepStrictEqual(v.revisions.map(r => r.label), ['A', 'B']);
+  assert.deepStrictEqual(v.links, [{ kind: 'meeting', meetingId: 'm', itemId: 'i' }]);
+  assert.strictEqual(FX.execIsClosed(v), false);
+  const done = FX.execItemView({ ...sub, events: [...sub.events, ev('c', '2026-10-07', 'approved', 'ARCH')] }, '2026-10-11');
+  assert.deepStrictEqual([done.status, done.ball, FX.execIsClosed(done)], ['approved', null, true]);
+  const chg = FX.execItemView(task({ exType: 'general', exNo: 'CHG-001', exChange: { decision: 'approved_cond', approvedText: 'X', proposed: 'Y' }, events: [ev('d', '2026-10-04', 'approved', 'ARCH')] }), '2026-10-11');
+  assert.deepStrictEqual([chg.type, chg.status, chg.approvedText, FX.execIsClosed(chg)], ['change', 'approved_cond', 'X', true]);
+  const gen = FX.execItemView(task({ exType: 'general', exNo: 'GEN-001', events: [ev('e', '2026-10-04', 'progress', 'STRC')] }), '2026-10-11');
+  assert.deepStrictEqual([gen.type, gen.status, FX.execIsClosed(gen)], ['general', 'open', false]);
+  assert.deepStrictEqual(gen.ball, { party: 'consultant', name: 'STRC' });
+  const rfi = FX.execItemView(task({ exType: 'rfi', events: [ev('f', '2026-10-04', 'progress', 'PM')] }), '2026-10-11');
+  assert.deepStrictEqual([rfi.status, rfi.ball], ['pending', { party: 'consultant', name: 'PM' }]);
+});
+
+test('finishes: a row linked to a log submittal is approved while the submittal is closed; a row from an approved submittal', () => {
+  const sub = task({ id: 's', exType: 'submittal', exNo: 'SUB-001', title: 'חיפוי', exSpec: '09.1', discipline: 'ARCH', attachments: [{ id: 'f', url: '/a.pdf', name: 'a.pdf' }], events: [ev('a', '2026-10-04', 'sent', 'ARCH'), ev('b', '2026-10-09', 'approved', 'ARCH', { note: 'גוון F-7016' })] });
+  const views = [FX.execItemView(sub, '2026-10-11')];
+  assert.strictEqual(FX.finishStatus({ submittalId: 's' }, views), 'approved');
+  assert.strictEqual(FX.finishStatus({ submittalId: 's' }, [FX.execItemView({ ...sub, events: sub.events.slice(0, 1) }, '2026-10-11')]), 'pending');
+  const r = FX.finishFromSubmittalT(sub);
+  assert.deepStrictEqual([r.element, r.approvedAt, r.submittalId, r.specSection, r.discipline, r.notes, r.files.length], ['חיפוי', '2026-10-09', 's', '09.1', 'ARCH', 'גוון F-7016', 1]);
+});
+
+test('finishes: approving a change writes its line on the rows that link it', () => {
+  const t = task({ id: 'c', exNo: 'CHG-002', exType: 'general', exChange: { decision: 'approved', approvedText: 'Fundermax 8 מ"מ' } });
+  const rows = [{ id: 'r1', changeId: 'c', notes: 'הערה' }, { id: 'r2', changeId: null, notes: '' }];
+  const out = FX.finishApplyChange(rows, t);
+  assert.strictEqual(out[0].notes, 'הערה\nשונה לפי CHG-002: Fundermax 8 מ"מ');
+  assert.strictEqual(out[1], rows[1]);
+  assert.strictEqual(FX.finishApplyChange(rows, { ...t, exChange: { decision: 'rejected' } }), rows);
+});
+
 /* ── the page: migration on load, and the log kept out of everything that collects tasks ── */
 const fnBody = name => { const i = html.indexOf('function ' + name + '('); assert.ok(i >= 0, name + ' not found'); const j = html.indexOf('\nfunction ', i + 10); return html.slice(i, j < 0 ? i + 200000 : Math.min(j, i + 200000)); };
 
@@ -303,7 +344,17 @@ test('change requests: a side-panel section on log tasks, and ויתורים ו�
   assert.match(html, /const TaskSidebarExtraCtx=React\.createContext\(null\)/);
   assert.match(fnBody('TaskDetailSidebar'), /useContext\(TaskSidebarExtraCtx\)/);
   const ex = fnBody('ExecutionView').split('/* ══ ויתורים ושינויים')[0];
-  assert.match(ex, /TaskSidebarExtraCtx\.Provider,\{value:exChangeSectionFor\}/);
+  assert.match(ex, /TaskSidebarExtraCtx\.Provider,\{value:exSideFor\(data,save\)\}/);
+});
+
+test('meetings, finishes, My Tasks and the landing read log tasks, not doc.execItems', () => {
+  const a = html.indexOf('/* ═══ exec-logic ═══ */'), b = html.indexOf('/* ═══ /exec-logic ═══ */');
+  const ep = html.indexOf('function ExecItemPanel'), epe = html.indexOf('\nfunction ', ep + 20);
+  const nd = html.indexOf('function ExNewItemDialog'), nde = html.indexOf('\nfunction ', nd + 20);
+  const outside = [...html.matchAll(/execItems/g)].map(x => x.index).filter(i => !(i > a && i < b) && !(i > ep && i < epe) && !(i > nd && i < nde));
+  const reads = outside.filter(i => /data\.execItems|d\.execItems|doc\.execItems/.test(html.slice(i - 5, i + 9)));
+  assert.deepStrictEqual(reads.map(i => html.slice(i - 60, i + 40)), []);
+  assert.ok(!html.slice(html.indexOf('function ExFinishesView'), html.indexOf('function ExFinishDialog')).includes('ExecItemPanel'));
   const chg = html.slice(html.indexOf('function ExChangesView('), html.indexOf('/* ══ לוח גמרים'));
   assert.ok(chg.includes('execLogTasks(data).filter(t=>t.exChange)'));
   assert.ok(!chg.includes('execItems') && !chg.includes('ExecItemPanel') && !chg.includes('ExNewItemDialog'));
