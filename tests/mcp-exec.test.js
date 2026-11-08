@@ -149,7 +149,7 @@ test('a project file still holding the old items is converted on first touch and
   const c = await call(SHAY, 'create_exec_item', { project: 'PH01', type: 'rfi', title: 'חדש' });
   assert.strictEqual(c.created.number, 'RFI-005');
   const doc = readJson(PH01);
-  assert.strictEqual(doc.execItems, undefined);
+  assert.deepStrictEqual(doc.execItems, []);
   assert.strictEqual(doc.execItemsLegacy.length, 1);
   assert.deepStrictEqual(logTasks().map(t => t.exNo), ['RFI-004', 'RFI-005']);
 });

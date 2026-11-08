@@ -11,7 +11,7 @@ let n = 0;
 const uid = () => 'x' + ++n;
 const NAMES = ['EXT_TYPES', 'EXEC_LOG_SHEET_ID', 'execLogSheet', 'execLogTasks', 'exLatest', 'exCountStart', 'execTaskClosed',
   'execNextNo', 'execNewTask', 'execBall', 'execWaitingT', 'execRound', 'execCountsT', 'execBallSplitT', 'execForMeT',
-  'execSetChange', 'execDecideChangeT', 'execPartyDisc', 'execMigrateDoc', 'execTypeOfGroup', 'execNumberNew', 'EXEC_LOG_GROUPS'];
+  'execSetChange', 'execDecideChangeT', 'execPartyDisc', 'execMigrateDoc', 'execTypeOfGroup', 'execNumberNew', 'EXEC_LOG_GROUPS', 'execEnsureGroups'];
 const L = new Function('uid', m[1] + '\nreturn {' + NAMES.map(k => `${k}:typeof ${k}==='undefined'?undefined:${k}`).join(',') + '};')(uid);
 
 /* the page's own event ordering, to prove the block's copies agree */
@@ -181,7 +181,7 @@ test('migration: one log sheet, task ids are the old item ids, old items kept as
   assert.strictEqual(sh.id, 'exlog');
   assert.strictEqual(sh.track, 'execution');
   assert.deepStrictEqual(sh.tasks.map(t => t.id), ['rfi1', 'iss1', 'sub1', 'chg1']);
-  assert.strictEqual(d.execItems, undefined);
+  assert.deepStrictEqual(d.execItems, []);
   assert.strictEqual(d.execItemsLegacy.length, 4);
   assert.deepStrictEqual(d.execSeq, { rfi: 3, issue: 1, submittal: 1, change: 1 });
   assert.strictEqual(d.sheets.length, 2);
@@ -269,7 +269,7 @@ test('migration folds in an item a stale tab added after the move', () => {
   const d = L.execMigrateDoc({ ...a, execItems: [late, oldDoc().execItems[1]] }, DISCS);
   assert.deepStrictEqual(L.execLogTasks(d).map(t => t.id), ['rfi1', 'iss1', 'sub1', 'chg1', 'rfi9']);
   assert.strictEqual(d.execItemsLegacy.length, 5);
-  assert.strictEqual(d.execItems, undefined);
+  assert.deepStrictEqual(d.execItems, []);
 });
 
 test('log sheet lookup', () => {
@@ -322,6 +322,65 @@ test('finishes: approving a change writes its line on the rows that link it', ()
   assert.strictEqual(FX.finishApplyChange(rows, { ...t, exChange: { decision: 'rejected' } }), rows);
 });
 
+/* ── the conversion and the page's three-way merge (real functions from the page) ── */
+const MERGE = (() => {
+  const i = html.indexOf('/* ═══ Three-way merge'); const j = html.indexOf('function mergeDocs', i); const k = html.indexOf('\n}', j) + 2;
+  return new Function(html.slice(i, k) + '\nreturn {mergeDocs};')();
+})();
+const clone = x => JSON.parse(JSON.stringify(x));
+
+test('review #1: a fetched document still in the old shape is converted before the merge, so the log and a local edit survive', () => {
+  const raw = oldDoc();
+  const base = L.execMigrateDoc(clone(raw), DISCS);
+  const mine = clone(base); const t = mine.sheets.find(s => s.type === 'execlog').tasks[0]; t.title = 'נערך כאן';
+  const theirs = L.execMigrateDoc(clone(raw), DISCS); // what the page now does with a fetched document
+  const out = MERGE.mergeDocs(base, mine, theirs);
+  const log = out.sheets.find(s => s.type === 'execlog');
+  assert.ok(log, 'the log sheet survives');
+  assert.strictEqual(log.tasks.find(x => x.id === 'rfi1').title, 'נערך כאן');
+  // the page converts what it fetches in both merge paths (the 412 retry and the re-check)
+  assert.strictEqual((html.match(/const theirs=execMigrateFetched\(/g) || []).length, 2);
+});
+
+test('review #2: an item a stale tab adds survives that tab\'s own merge against a converted server copy', () => {
+  const raw = oldDoc();
+  const serverNow = L.execMigrateDoc(clone(raw), DISCS);
+  assert.deepStrictEqual(serverNow.execItems, [], 'the key stays, empty');
+  const staleMine = clone(raw); staleMine.execItems.push({ ...clone(raw.execItems[0]), id: 'late', seq: 9, number: 'RFI-009' });
+  const merged = MERGE.mergeDocs(clone(raw), staleMine, serverNow);
+  assert.deepStrictEqual(merged.execItems.map(x => x.id), ['late']);
+  const again = L.execMigrateDoc(merged, DISCS);
+  assert.ok(L.execLogTasks(again).some(x => x.id === 'late'));
+  assert.deepStrictEqual(again.execItems, []);
+});
+
+test('review #3: a duplicated log row gets its own number, not a copy of the original\'s', () => {
+  const a = task({ id: 'a', exType: 'rfi', exSeq: 4, exNo: 'RFI-004', groupId: 'exg-rfi', exChange: { decision: 'requested' }, exSource: { kind: 'meeting' } });
+  const copy = { ...clone(a), id: 'b' };
+  const r = L.execNumberNew([a, copy], { rfi: 4 });
+  assert.strictEqual(r.tasks[0], a);
+  assert.deepStrictEqual([r.tasks[1].exNo, r.tasks[1].exSeq], ['RFI-005', 5]);
+  assert.strictEqual(r.tasks[1].exChange, undefined);
+  assert.strictEqual(r.tasks[1].exSource, undefined);
+});
+
+test('review #9: the type sections come back if one was deleted', () => {
+  const r = L.execNumberNew([], {});
+  assert.ok(typeof L.execEnsureGroups === 'function');
+  const g = L.execEnsureGroups([{ id: 'exg-rfi', name: 'RFI שלי' }]);
+  assert.deepStrictEqual(g.map(x => x.id), ['exg-rfi', 'exg-issue', 'exg-submittal', 'exg-general']);
+  assert.strictEqual(g[0].name, 'RFI שלי');
+  const same = [{ id: 'exg-issue' }, { id: 'exg-rfi' }, { id: 'exg-submittal' }, { id: 'exg-general' }];
+  assert.strictEqual(L.execEnsureGroups(same), same);
+  assert.ok(r);
+});
+
+test('review #4: the trash hides log tasks outside the trial and restores a log task back into the log', () => {
+  const av = html.slice(html.indexOf('function ArchiveView('), html.indexOf('function ArchiveView(') + 20000);
+  assert.match(av, /setItems\(\(d\.items \|\| \[\]\)\.filter\(r => canSeeExec\(\) \|\| r\.sheetId !== EXEC_LOG_SHEET_ID\)\)/);
+  assert.match(av, /const s = sheets\.find\(x => x\.id === r\.sheetId && \(x\.type === 'list' \|\| x\.type === 'execlog'\)\) \|\| home;/);
+});
+
 /* ── the page: migration on load, and the log kept out of everything that collects tasks ── */
 const fnBody = name => { const i = html.indexOf('function ' + name + '('); assert.ok(i >= 0, name + ' not found'); const j = html.indexOf('\nfunction ', i + 10); return html.slice(i, j < 0 ? i + 200000 : Math.min(j, i + 200000)); };
 
@@ -365,7 +424,8 @@ test('the old item UI is gone; only the conversion still knows doc.execItems', (
   for (const n of ['function ExecItemPanel', 'function ExNewItemDialog', 'function ExPartyChip', 'function exSortBar', 'const EX_LOG_COLS', 'const EX_CHG_COLS'])
     assert.ok(!html.includes(n), n + ' still in the page');
   const a = html.indexOf('/* ═══ exec-logic ═══ */'), b = html.indexOf('/* ═══ /exec-logic ═══ */');
-  const outside = [...html.matchAll(/\.execItems/g)].map(x => x.index).filter(i => !(i > a && i < b));
+  const fetched = html.indexOf('const execMigrateFetched='), fetchedEnd = html.indexOf('\n', fetched);
+  const outside = [...html.matchAll(/\.execItems/g)].map(x => x.index).filter(i => !(i > a && i < b) && !(i > fetched && i < fetchedEnd));
   assert.deepStrictEqual(outside.map(i => html.slice(i - 40, i + 20)), []);
 });
 
