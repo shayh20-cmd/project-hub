@@ -2032,7 +2032,7 @@ Object.assign(HE_EN, {
 "לוח: ": "Board: ",
 "שלבי התכנון": "Design stages",
 "לכל שלב: תאריכי התחלה וסיום וסטטוס — כך רואים באיזה שלב הפרויקט וכמה זמן לקח כל שלב. המשימות עצמן מנוהלות בניהול תכנון.": "Each stage has start and end dates and a status — so you can see which stage the project is in and how long each stage took. The tasks themselves are managed in Design Management.",
-"אין עדיין שלבים — מוסיפים בטמפלייט › סכימת עבודה › מסלול תכנון.": "No stages yet — add them in Template › Work scheme › Design track.",
+"אין עדיין שלבים — מוסיפים בהגדרות › סכימת עבודה › מסלול תכנון.": "No stages yet — add them in Settings › Work scheme › Design track.",
 "פורטפוליו זמין מרמת Admin": "The portfolio is available from the Admin level",
 "עכשיו": "just now",
 "ספריית המשרד": "Office library",
@@ -3386,6 +3386,16 @@ Object.assign(HE_EN, {
 "תיקייה ראשית": "Main folder",
 "תיקיית תאריך": "Date folder",
 "התיקייה שנבחרה לא בתוך {b}": "The chosen folder is not inside {b}",
+"סטטוס דאשבורד": "Status dashboard",
+"שדות בדאשבורד": "Dashboard fields",
+"ימי עבודה נדרשים": "Working days needed",
+"הספירה התחילה ב-{d}": "Count started on {d}",
+"הספירה תתחיל כשהסטטוס יעבור לבעבודה": "The count starts when the status changes to In work",
+"שדה חדש נוסף כבוי בכל המבטים — הדלק אותו כאן במבט שבו תרצה אותו": "A new field starts off in every view — turn it on here in the view where you want it",
+"מס׳": "No.",
+"גרור כדי לשנות את הסדר": "Drag to reorder",
+"פתח הכול": "Expand all",
+"סגור הכול": "Collapse all",
 });
 
 window.I18N_HE_EN = HE_EN;
