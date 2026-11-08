@@ -11,7 +11,7 @@ let n = 0;
 const uid = () => 'x' + ++n;
 const NAMES = ['EXT_TYPES', 'EXEC_LOG_SHEET_ID', 'execLogSheet', 'execLogTasks', 'exLatest', 'exCountStart', 'execTaskClosed',
   'execNextNo', 'execNewTask', 'execBall', 'execWaitingT', 'execRound', 'execCountsT', 'execBallSplitT', 'execForMeT',
-  'execSetChange', 'execDecideChangeT', 'execPartyDisc', 'execMigrateDoc'];
+  'execSetChange', 'execDecideChangeT', 'execPartyDisc', 'execMigrateDoc', 'execTypeOfGroup', 'execNumberNew', 'EXEC_LOG_GROUPS'];
 const L = new Function('uid', m[1] + '\nreturn {' + NAMES.map(k => `${k}:typeof ${k}==='undefined'?undefined:${k}`).join(',') + '};')(uid);
 
 /* the page's own event ordering, to prove the block's copies agree */
@@ -185,6 +185,22 @@ test('migration: one log sheet, task ids are the old item ids, old items kept as
   assert.strictEqual(d.execItemsLegacy.length, 4);
   assert.deepStrictEqual(d.execSeq, { rfi: 3, issue: 1, submittal: 1, change: 1 });
   assert.strictEqual(d.sheets.length, 2);
+  assert.deepStrictEqual(sh.groups.map(g => g.id), ['exg-issue', 'exg-rfi', 'exg-submittal', 'exg-general']);
+  assert.deepStrictEqual(sh.tasks.map(t => t.groupId), ['exg-rfi', 'exg-issue', 'exg-submittal', 'exg-general']);
+});
+
+test('a new task sits in its type section; a row added in a section gets that type and the next number', () => {
+  assert.strictEqual(L.execNewTask([], { type: 'rfi', title: 'x' }, {}, '2026-10-04').groupId, 'exg-rfi');
+  assert.strictEqual(L.execTypeOfGroup('exg-submittal'), 'submittal');
+  assert.strictEqual(L.execTypeOfGroup('other'), 'general');
+  const old = task({ id: 'o', exType: 'rfi', exSeq: 2, exNo: 'RFI-002', groupId: 'exg-rfi' });
+  const fresh = { id: 'n', groupId: 'exg-rfi', title: '', events: [] };
+  const r = L.execNumberNew([old, fresh], { rfi: 2 });
+  assert.deepStrictEqual([r.tasks[1].exType, r.tasks[1].exNo, r.tasks[1].exSeq], ['rfi', 'RFI-003', 3]);
+  assert.strictEqual(r.tasks[0], old);
+  assert.deepStrictEqual(r.seq, { rfi: 3 });
+  const same = L.execNumberNew([old], { rfi: 2 });
+  assert.strictEqual(same.changed, false);
 });
 
 test('migration: fields and numbers carry over; a change becomes a marked general task', () => {
@@ -272,6 +288,15 @@ test('migrateData runs the execution migration with the project disciplines', ()
   assert.match(fnBody('migrateData'), /return execMigrateDoc\(.*,execDiscsOf\(d\)\);\}/);
   assert.match(html, /'disc-CONT':'#[0-9A-F]{6}'/);
   assert.match(html, /const EXEC_CONT_DISC=\{id:'CONT'/);
+});
+
+test('the log screen is the planning list over the execlog sheet, with CONT among the ball holders', () => {
+  const v = fnBody('ExecutionView').split('/* ══ ויתורים ושינויים')[0];
+  assert.ok(v.includes('h(ListView,'), 'hosts ListView');
+  assert.ok(!v.includes('execItems'), 'no longer reads doc.execItems');
+  assert.match(v, /disciplines:discs/);
+  assert.match(v, /EXEC_CONT_DISC\]/);
+  assert.match(html, /extraCells&&extraCells\.__namePrefix&&extraCells\.__namePrefix\(task\)/);
 });
 
 test('every task collector takes only list sheets, so the execlog sheet stays out', () => {
