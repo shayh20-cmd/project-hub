@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>Celebrate preview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; padding: 32px; background: #f6f7fb; color: #222; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { margin: 0 0 20px; color: #666; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; }
+  button { font: inherit; font-size: 16px; padding: 12px 20px; border: 0; border-radius: 10px; background: #4361ee; color: #fff; cursor: pointer; }
+  button:hover { background: #3651d4; }
+  button.rand { background: #b5179e; }
+  small { display: block; opacity: .75; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>אנימציות חגיגה <small style="display:inline;margin-inline-start:8px">Celebration animations</small></h1>
+<p>לחצו על כפתור לצפייה · Click a button to watch</p>
+<div class="row">
+  <button data-k="fireworks">🎆 זיקוקים<small>Fireworks</small></button>
+  <button data-k="confetti">🎉 קונפטי<small>Confetti</small></button>
+  <button data-k="unicorn">🦄 חד קרן וקשת<small>Unicorn &amp; rainbow</small></button>
+  <button data-k="balloons">🎈 בלונים<small>Balloons</small></button>
+  <button data-k="rocket">🚀 רקטה<small>Rocket</small></button>
+  <button class="rand" data-k="">🎲 אקראי<small>Random</small></button>
+</div>
+<script src="/celebrate.js"></script>
+<script>
+  document.querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () { Celebrate.play(b.dataset.k || undefined); });
+  });
+</script>
+</body>
+</html>
