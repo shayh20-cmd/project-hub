@@ -4070,6 +4070,20 @@ Object.assign(HE_EN, {
 "אילוצים פיסיים": "Physical constraints",
 "ייצוא הדאשבורד ל־Excel או ל־PDF": "Export the dashboard to Excel or PDF",
 "לחץ כדי לשנות את השם": "Click to rename",
+"+ הוסף משתמש": "+ Add user",
+"הוספת משתמש": "Add a user",
+"משתמש חדש": "New user",
+"שם פרטי": "First name",
+"מייל (לכניסה)": "Email (for sign-in)",
+"המשתמש נכנס לאתר בחשבון Microsoft עם המייל הזה.": "The user signs in with the Microsoft account for this email.",
+"חסר שם": "Name is missing",
+"כתובת המייל לא תקינה": "The email address isn't valid",
+"כבר יש ברשימה עובד עם המייל הזה": "Someone on the list already has this email",
+"המשתמש לא נשמר — בדוק שהשרת המקומי פועל": "The user wasn't saved — check that the local server is running",
+"השינוי לא נשמר — בדוק שהשרת המקומי פועל": "The change wasn't saved — check that the local server is running",
+"להסיר את {name} מרשימת העובדים?": "Remove {name} from the staff list?",
+"הסר את {name} מרשימת העובדים": "Remove {name} from the staff list",
+"הסר מרשימת העובדים": "Remove from the staff list",
 });
 
 window.I18N_HE_EN = HE_EN;

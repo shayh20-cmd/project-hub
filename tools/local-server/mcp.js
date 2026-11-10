@@ -80,9 +80,11 @@ module.exports = function createMcp(ctx) {
   /* ── who: a signed-in email (or, locally, the person at the machine) → staff, role ── */
   function identify(who, reg) {
     const off = officeData();
+    // the page's roster plus the people a Super Admin added in Settings → Team (officeStaff)
+    const roster = [...off.staff, ...(Array.isArray(reg.officeStaff) ? reg.officeStaff : []).filter(s => s && s.id && !off.staff.some(x => x.id === s.id))];
     const mail = (who.email || '').trim().toLowerCase();
-    let staff = mail ? off.staff.find(s => (s.email || '').toLowerCase() === mail) : null;
-    if (!staff && !mail) staff = off.staff.find(s => s.name === who.name) || null;
+    let staff = mail ? roster.find(s => (s.email || '').trim().toLowerCase() === mail) : null;
+    if (!staff && !mail) staff = roster.find(s => s.name === who.name) || null;
     const id = staff ? staff.id : 'ext:' + mail;
     const prof = (reg.staffProfiles || {})[id];
     const profName = prof ? [prof.firstName, prof.lastName].map(x => (x || '').trim()).filter(Boolean).join(' ') : '';
