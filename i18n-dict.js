@@ -4092,6 +4092,9 @@ Object.assign(HE_EN, {
 "להסיר את {name} מרשימת העובדים?": "Remove {name} from the staff list?",
 "הסר את {name} מרשימת העובדים": "Remove {name} from the staff list",
 "הסר מרשימת העובדים": "Remove from the staff list",
+"משימות שהושלמו בנפרד": "Completed tasks in a separate section",
+"תצוגת רשימה": "List display",
+"משימות שהושלמו מוצגות בסקשן נפרד בתחתית הרשימה": "Completed tasks are shown in a separate section at the bottom of the list",
 });
 
 window.I18N_HE_EN = HE_EN;
