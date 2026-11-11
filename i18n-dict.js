@@ -4095,6 +4095,9 @@ Object.assign(HE_EN, {
 "משימות שהושלמו בנפרד": "Completed tasks in a separate section",
 "תצוגת רשימה": "List display",
 "משימות שהושלמו מוצגות בסקשן נפרד בתחתית הרשימה": "Completed tasks are shown in a separate section at the bottom of the list",
+"חיפוש לפי שם או משרד": "Search by name or office",
+"אין אנשי קשר תואמים": "No matching contacts",
+"מוסיף…": "Adding…",
 });
 
 window.I18N_HE_EN = HE_EN;

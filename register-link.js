@@ -237,6 +237,27 @@
       .sort((a, b) => nameIn(a, lang).localeCompare(nameIn(b, lang), locale(lang)));
   }
 
+  /* The list behind a project's consultants "Add": the register's contacts who are not on the
+     project, not the office's own people (the table leaves those out) and not bare sign-ins.
+     A search finds Hebrew or English names whatever the page's language; each is shown by its
+     Hebrew name, the English one only when it has none, and so is its firm. */
+  function addableContacts(persons, firms, members, q) {
+    const firmById = new Map((firms || []).map(f => [f.id, f]));
+    const onProject = new Set((members || []).map(m => m.personId));
+    const needle = needleOf(q);
+    return (persons || [])
+      .filter(p => p.isContact !== false && !tagsOf(p, 'kind').includes('internal') && !onProject.has(p.id) && nameIn(p, 'he'))
+      .filter(p => {
+        const firm = firmById.get(p.firmId) || {};
+        return hit(needle, [p.name, p.nameHe, firm.name, firm.nameHe, p.firmName, p.email, p.phone, p.mobile]);
+      })
+      .map(p => {
+        const firm = firmById.get(p.firmId);
+        return { id: p.id, name: nameIn(p, 'he'), firm: firm ? nameIn(firm, 'he') : String(p.firmName || '').trim() };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  }
+
   const blank = v => {
     const s = String(v == null ? '' : v).trim();
     return s === '' ? null : s;
@@ -409,7 +430,7 @@
     matchProjects, hubDisciplineFor, buildConsultantRows, projectFacts, subjectOf, tidyReturnAddress,
     nextEntry, hasConsultants, createRegisterClient,
     isConsultant, consultantFirms, nameIn, tagLabel, canEditRegister, editablePerson, disciplineChoices,
-    firmChoices, firmConsultantCount, filterConsultants, filterFirms,
+    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts,
     blank, newContactBody, newFirmBody, withEdit, writeErrorOf,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;

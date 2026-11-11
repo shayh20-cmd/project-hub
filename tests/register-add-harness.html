@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<title>register-add harness</title>
+<!-- Browser checks for the consultants header's "Add" (RegisterLinkUI.AddContact in
+     register-link-ui.js), run against a stand-in register: fetch and supabase-js are replaced
+     before the module loads, so nothing reaches the register. Open it through the local server:
+     http://localhost:3000/tests/register-add-harness.html — the title reads "PASS n/n" or
+     "FAIL …", and the list below says which check failed. -->
+<style>
+:root{--bg:#F5F6F8;--surface:#fff;--surface-2:#FAFBFC;--border:#E8EAED;--text:#1E1F21;--text-2:#6D6E6F;--text-3:#6B7280;--accent:#2563EB}
+body{font-family:system-ui,sans-serif;background:var(--bg);margin:0;padding:16px}
+.box{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-width:720px}
+.ov-sec-hdr{display:flex;align-items:center;gap:7px;padding:11px 16px;font-size:13px;font-weight:700;position:relative}
+.ov-sec-add-btn{padding:3px 10px;font-size:11px;border:1px solid var(--accent);border-radius:12px;background:rgba(37,99,235,.08);color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600}
+.ov-edit-input{font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;width:100%}
+#out{font:12px ui-monospace,monospace;padding:12px 0;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="box"><div class="ov-sec-hdr" id="host"></div></div>
+<pre id="out">running…</pre>
+<script src="/react-18.3.1.min.js"></script>
+<script src="/react-dom-18.3.1.min.js"></script>
+<script src="/register-link.js"></script>
+<script>
+/* The stand-in register: one project, its members, and the directory. */
+window.H = (function () {
+  const H = { calls: [], putStatus: 204, p2Status: 503, members: null };
+  const json = (body, status) => Promise.resolve(new Response(body === null ? null : JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
+  H.reset = () => {
+    H.members = [
+      { personId: 'staff', name: 'Arie Hayun', isStaff: true },
+      { personId: 'c', name: 'Uri Golomb', isStaff: false },
+    ];
+  };
+  H.reset();
+  H.persons = [
+    { id: 'a', name: 'Tamir Valent', nameHe: 'תמיר ולנט', firmId: 'f1', email: 'tamir@uv-eng.com', tags: { kind: ['consultant'] } },
+    { id: 'b', name: 'Ilan Bar', firmId: 'f2', tags: { kind: ['consultant'] } },
+    { id: 'c', name: 'Uri Golomb', nameHe: 'אורי גולומב', firmId: 'f1', tags: { kind: ['consultant'] } },
+    { id: 'staff', name: 'Arie Hayun', nameHe: 'אריה חיון', tags: { kind: ['internal'] } },
+    { id: 'user', name: 'Login Only', isContact: false, tags: {} },
+  ];
+  H.firms = [{ id: 'f1', name: 'UV Engineering', nameHe: 'יו.וי הנדסה', tags: {} }, { id: 'f2', name: 'Datamap', tags: {} }];
+  window.fetch = (url, init) => {
+    const method = (init && init.method) || 'GET';
+    const u = String(url);
+    H.calls.push([method, u.replace('https://reg.example', '')]);
+    if (u === '/api/register-config') return json({ supabaseUrl: 'https://sb.example', supabaseAnonKey: 'k', api: 'https://reg.example', hubUrl: null });
+    const path = u.replace('https://reg.example', '');
+    if (path === '/api/me') return json({ role: 'editor' });
+    if (path === '/api/persons') return json(H.persons);
+    if (path === '/api/firms') return json(H.firms);
+    if (path === '/api/tags') return json([]);
+    if (path === '/api/projects/p1') return json({ id: 'p1', code: '26-001', members: H.members.slice() });
+    if (path === '/api/projects/p2') return H.p2Status === 200 ? json({ id: 'p2', code: '26-002', members: [] }) : json(null, H.p2Status);
+    const m = path.match(/^\/api\/projects\/p1\/members\/([^/]+)$/);
+    if (m && method === 'PUT') {
+      if (H.putStatus === 204) H.members.push({ personId: decodeURIComponent(m[1]), name: '', isStaff: false });
+      return json(null, H.putStatus);
+    }
+    return json({ error: 'unexpected ' + path }, 500);
+  };
+  window.supabase = {
+    createClient: () => ({
+      auth: {
+        getSession: () => Promise.resolve({ data: { session: { access_token: 'x.e30.y' } } }),
+        refreshSession: () => Promise.resolve({ data: { session: null } }),
+        onAuthStateChange: () => {},
+      },
+    }),
+  };
+  return H;
+})();
+</script>
+<script src="/register-link-ui.js"></script>
+<script>
+(async function () {
+  const UI = window.RegisterLinkUI;
+  const host = document.getElementById('host');
+  const tick = (ms = 40) => new Promise(r => setTimeout(r, ms));
+  const until = async (fn, ms = 2000) => { for (let t = 0; t < ms; t += 20) { const v = fn(); if (v) return v; await tick(20); } return fn(); };
+  const setValue = (el, v) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const btn = () => host.querySelector('.ov-sec-add-btn');
+  const pop = () => document.querySelector('.rl-add-pop');
+  const names = () => [...document.querySelectorAll('.rl-add-name')].map(e => e.textContent);
+  const firms = () => [...document.querySelectorAll('.rl-add-firm')].map(e => e.textContent);
+  const results = [];
+  const check = (name, ok, detail) => results.push({ name, ok: !!ok, detail });
+
+  const root = ReactDOM.createRoot(host);
+  root.render(React.createElement(React.Fragment, null, 'יועצים ומתכננים', React.createElement(UI.AddContact, { data: { registerProjectId: 'p1' } })));
+
+  await until(btn);
+  check('an editor sees one button, reading הוספה', btn() && btn().textContent === 'הוספה' && host.querySelectorAll('button').length === 1, btn() && btn().textContent);
+  check('nothing reads Edit in KK Hub', !/KK Hub/.test(host.textContent), host.textContent);
+
+  btn().click();
+  await until(() => names().length);
+  const input = pop() && pop().querySelector('input');
+  check('the list opens with the search as its first line', pop() && pop().firstElementChild === input, pop() && pop().firstElementChild && pop().firstElementChild.tagName);
+  check('the search has the focus', document.activeElement === input);
+  check('it lists the contacts not on the project, office staff and sign-ins left out',
+    JSON.stringify(names()) === JSON.stringify(['תמיר ולנט', 'Ilan Bar']), JSON.stringify(names()));
+  check('names and offices are in Hebrew, English only when there is no Hebrew',
+    JSON.stringify(firms()) === JSON.stringify(['יו.וי הנדסה', 'Datamap']), JSON.stringify(firms()));
+  check('names and offices are not translated by the page', [...document.querySelectorAll('.rl-add-name,.rl-add-firm')].every(e => e.hasAttribute('data-i18n-skip')));
+
+  setValue(input, 'tamir'); await tick();
+  check('an English search finds the Hebrew-named contact', JSON.stringify(names()) === JSON.stringify(['תמיר ולנט']), JSON.stringify(names()));
+  setValue(input, 'ולנט'); await tick();
+  check('a Hebrew search finds it too', JSON.stringify(names()) === JSON.stringify(['תמיר ולנט']), JSON.stringify(names()));
+  setValue(input, 'uv engineering'); await tick();
+  check('the office\'s English name finds it', JSON.stringify(names()) === JSON.stringify(['תמיר ולנט']), JSON.stringify(names()));
+  setValue(input, 'zzz'); await tick();
+  check('no match says so', /אין אנשי קשר תואמים/.test(pop().textContent), pop().textContent);
+  setValue(input, ''); await tick();
+
+  H.putStatus = 403;
+  [...document.querySelectorAll('.rl-add-item')][1].click();
+  await until(() => document.querySelector('.rl-add-error'));
+  check('a refusal is said in the list, which stays open', pop() && /אין הרשאה/.test((document.querySelector('.rl-add-error') || {}).textContent || ''),
+    (document.querySelector('.rl-add-error') || {}).textContent);
+
+  H.putStatus = 204;
+  const before = H.calls.filter(c => c[1] === '/api/projects/p1').length;
+  [...document.querySelectorAll('.rl-add-item')][0].click();
+  await until(() => !pop());
+  check('picking someone puts them on the project in the register', H.calls.some(c => c[0] === 'PUT' && c[1] === '/api/projects/p1/members/a'),
+    JSON.stringify(H.calls.filter(c => c[0] === 'PUT')));
+  check('and closes the list', !pop());
+  await until(() => H.calls.filter(c => c[1] === '/api/projects/p1').length > before);
+  check('the project is read again', H.calls.filter(c => c[1] === '/api/projects/p1').length > before);
+
+  await tick(100);
+  btn().click();
+  await until(() => names().length);
+  check('someone added leaves the list', JSON.stringify(names()) === JSON.stringify(['Ilan Bar']), JSON.stringify(names()));
+  document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await tick();
+  check('Escape closes it', !pop());
+  btn().click(); await until(pop);
+  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  await tick();
+  check('a click outside closes it', !pop());
+
+  // A second project whose first read fails: the list says so and offers a retry.
+  const host2 = document.createElement('div'); host2.className = 'ov-sec-hdr'; document.querySelector('.box').appendChild(host2);
+  ReactDOM.createRoot(host2).render(React.createElement(UI.AddContact, { data: { registerProjectId: 'p2' } }));
+  const btn2 = await until(() => host2.querySelector('.ov-sec-add-btn'));
+  await until(() => H.calls.some(c => c[1] === '/api/projects/p2'));
+  await tick(100);
+  btn2.click(); await until(pop);
+  check('a failed first read says so, with a retry, instead of loading forever',
+    /המאגר לא עונה/.test(pop().textContent) && !/טוען/.test(pop().textContent), pop().textContent);
+  H.p2Status = 200;
+  [...pop().querySelectorAll('.rl-btn')].find(b => b.textContent === 'נסה שוב').click();
+  await until(() => pop() && names().length);
+  check('retry reads it again', pop() && !/המאגר לא עונה/.test(pop().textContent) && names().length === 3, pop() && pop().textContent);
+
+  const failed = results.filter(r => !r.ok);
+  document.title = failed.length ? 'FAIL ' + failed.map(r => r.name).join('; ') : 'PASS ' + results.length + '/' + results.length;
+  document.getElementById('out').textContent = results.map(r => (r.ok ? 'ok   ' : 'FAIL ') + r.name + (r.ok || r.detail === undefined ? '' : '  — ' + r.detail)).join('\n');
+})();
+</script>
+</body>
+</html>

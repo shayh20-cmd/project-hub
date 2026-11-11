@@ -515,3 +515,31 @@ test('writeErrorOf: a formatter puts the other person\'s value in words, and the
   assert.strictEqual(RL.writeErrorOf({ state: 'unreachable' }, null, 'Avi').who, 'Avi', 'every failure names the record');
   assert.strictEqual(RL.writeErrorOf({ state: 'unreachable' }).who, null);
 });
+
+test('addableContacts: contacts not on the project and not office staff, Hebrew names first, searched in both languages', () => {
+  const firms = [{ id: 'f1', name: 'UV Engineering', nameHe: 'יו.וי הנדסה' }, { id: 'f2', name: 'Datamap' }];
+  const persons = [
+    { id: 'a', name: 'Tamir Valent', nameHe: 'תמיר ולנט', firmId: 'f1', email: 'tamir@uv-eng.com', tags: { kind: ['consultant'] } },
+    { id: 'b', name: 'Ilan Bar', firmId: 'f2', tags: { kind: ['consultant'] } },
+    { id: 'c', name: 'Uri Golomb', nameHe: 'אורי גולומב', firmId: 'f1', tags: {} },
+    { id: 'staff', name: 'Arie Hayun', nameHe: 'אריה חיון', tags: { kind: ['internal'] } },
+    { id: 'user', name: 'Login Only', isContact: false },
+    { id: 'blank', name: '  ', nameHe: '' },
+    { id: 'loose', nameHe: 'רון קליק', firmName: 'יוזמות', tags: {} },
+  ];
+  const members = [{ personId: 'c' }];
+  const all = RL.addableContacts(persons, firms, members, '');
+  assert.deepStrictEqual(all.map(p => p.id), ['loose', 'a', 'b']);
+  assert.deepStrictEqual(all.find(p => p.id === 'a'), { id: 'a', name: 'תמיר ולנט', firm: 'יו.וי הנדסה' });
+  assert.deepStrictEqual(all.find(p => p.id === 'b'), { id: 'b', name: 'Ilan Bar', firm: 'Datamap' });
+  assert.deepStrictEqual(all.find(p => p.id === 'loose'), { id: 'loose', name: 'רון קליק', firm: 'יוזמות' });
+  const ids = q => RL.addableContacts(persons, firms, members, q).map(p => p.id);
+  assert.deepStrictEqual(ids('tamir'), ['a']);
+  assert.deepStrictEqual(ids('ולנט'), ['a']);
+  assert.deepStrictEqual(ids('uv engineering'), ['a']);
+  assert.deepStrictEqual(ids('הנדסה'), ['a']);
+  assert.deepStrictEqual(ids('UV-ENG'), ['a']);
+  assert.deepStrictEqual(ids('גולומב'), []);
+  assert.deepStrictEqual(ids('חיון'), []);
+  assert.deepStrictEqual(RL.addableContacts(null, null, null, 'x'), []);
+});
