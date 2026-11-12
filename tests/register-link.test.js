@@ -399,11 +399,20 @@ test('send: 403 refused, 404 not-found, 5xx and a network failure unreachable, n
   assert.strictEqual(seen.length, 0);
 });
 
-test('send: only POST, PATCH and PUT — anything else throws, and nothing is sent', async () => {
+test('send: only POST, PATCH, PUT and DELETE — anything else throws, and nothing is sent', async () => {
   const seen = [];
   const c = RL.createRegisterClient(config, fakeSupabase(), fakeWriteFetch([{ status: 204 }], seen));
-  for (const m of ['GET', 'DELETE', 'patch']) await assert.rejects(c.send(m, '/api/firms/f1', {}), /POST, PATCH and PUT/, m);
+  for (const m of ['GET', 'delete', 'patch']) await assert.rejects(c.send(m, '/api/firms/f1', {}), /POST, PATCH, PUT and DELETE/, m);
   assert.strictEqual(seen.length, 0);
+});
+
+test('send: a DELETE carries the token and no body; 204 is ok, 404 not-found', async () => {
+  const seen = [];
+  const c = RL.createRegisterClient(config, fakeSupabase(), fakeWriteFetch([{ status: 204 }, { status: 404 }], seen));
+  assert.deepStrictEqual(await c.send('DELETE', '/api/projects/p1/members/a'), { state: 'ok', data: null });
+  assert.deepStrictEqual(await c.send('DELETE', '/api/projects/p1/members/a'), { state: 'not-found' });
+  assert.deepStrictEqual(seen.map(x => [x.method, x.url.slice(x.url.indexOf('/api/')), x.body, x.type, !!x.auth]),
+    [['DELETE', '/api/projects/p1/members/a', undefined, undefined, true], ['DELETE', '/api/projects/p1/members/a', undefined, undefined, true]]);
 });
 
 // ── Settings: consultants and firms (spec 2026-10-07 §2) ──
@@ -662,6 +671,19 @@ test('addRowOptions: a contact with no firm, or a firm the directory lacks, keep
     [['lost', '', null, ['acoustics']], ['loose', 'יוזמות', null, ['acoustics']]]);
   assert.deepStrictEqual(RL.addRowOptions(persons, firms, tags, [], [], { firmId: 'f1' }, {}).people, [], 'an office pick leaves out people with no firm');
   assert.deepStrictEqual(RL.addRowOptions(persons, firms, tags, [], [], { discipline: 'acoustics' }, {}).people.map(p => p.id), ['lost', 'loose']);
+});
+
+test('removalOf: the row\'s people, their names, and the other rows that share them', () => {
+  const rows = [
+    { id: 'f:1|arch', contacts: [{ personId: 'a', name: 'אבי' }, { personId: 'b', name: 'בת' }, { personId: 'a', name: 'אבי' }] },
+    { id: 'f:1|str', contacts: [{ personId: 'a', name: 'אבי' }] },
+    { id: 'f:2|el', contacts: [{ personId: 'c', name: 'גיל' }] },
+    { id: 'p:x|-', contacts: [{ name: 'בלי מזהה' }] },
+  ];
+  assert.deepStrictEqual(RL.removalOf(rows[0], rows), { personIds: ['a', 'b'], names: ['אבי', 'בת'], alsoIn: [rows[1]] });
+  assert.deepStrictEqual(RL.removalOf(rows[2], rows), { personIds: ['c'], names: ['גיל'], alsoIn: [] });
+  assert.deepStrictEqual(RL.removalOf(rows[3], rows), { personIds: [], names: [], alsoIn: [] }, 'nobody to take off');
+  assert.deepStrictEqual(RL.removalOf(null, rows), { personIds: [], names: [], alsoIn: [] });
 });
 
 test('paletteFor: each register tag colour borrows the hub discipline of that hue, grey otherwise', () => {

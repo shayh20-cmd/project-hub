@@ -322,6 +322,30 @@
     }, 'הוספה');
   }
 
+  /* The consultants table's ×: takes a row's people off the project in the register (they stay
+     in the directory), then reads the project again. For the register's editors only — null for
+     anyone else, so the page shows no ×. Resolves to an error sentence, or null when it worked;
+     someone already gone (404) counts as done. */
+  function useRemoveConsultant(data) {
+    const s = useLinked(data);
+    const id = data && data.registerProjectId;
+    const ready = s.config === 'on' && s.signedIn && !!id;
+    const haveMe = !!s.me;
+    useEffect(() => { if (ready && !haveMe) loadMe(); }, [ready, haveMe]);
+    if (!ready || !(s.me && s.me.state === 'ok' && RL.canEditRegister(s.me.data.role))) return null;
+    return row => {
+      const ids = RL.removalOf(row, []).personIds;
+      return Promise.all(ids.map(pid => client.send('DELETE', '/api/projects/' + encodeURIComponent(id) + '/members/' + encodeURIComponent(pid))
+        .catch(() => ({ state: 'unreachable' }))))
+        .then(rs => {
+          if (rs.some(r => r.state === 'signed-out')) recheck();
+          reloadProject(id);
+          const bad = rs.find(r => r.state !== 'ok' && r.state !== 'not-found');
+          return bad ? RL.writeErrorOf(bad).text : null;
+        });
+    };
+  }
+
   /* One field of the add row: an input whose list opens on focus, narrows as you type, and takes
      its first entry on Enter (the arrows move through it). `label` is the pick's text, `onQuery`
      hands the search to the caller, who narrows `options`; `onDone` follows a pick (the next
@@ -613,7 +637,7 @@
   const retryMe = () => { if (snap.me && snap.me.state !== 'ok') set({ me: null }); };
 
   window.RegisterLinkUI = {
-    useConsultantRows, FactsCard, ConsultantsNotice, EditInHub, AddContact, AddContactRow, AutoLink, DisciplineMatch,
+    useConsultantRows, useRemoveConsultant, FactsCard, ConsultantsNotice, EditInHub, AddContact, AddContactRow, AutoLink, DisciplineMatch,
     useDirectory, directoryStatus, DirectoryNotice, write, hubLink, retryMe,
   };
   boot();

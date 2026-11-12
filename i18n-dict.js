@@ -4105,6 +4105,14 @@ Object.assign(HE_EN, {
 "ללא קוד": "No code",
 "תחום ב-KKarcDB": "KKarcDB discipline",
 "הוספה לפרויקט": "Add to project",
+"גרור לשינוי הסדר (או חצים למעלה/למטה)": "Drag to reorder (or use the up and down arrows)",
+"הזז את {name} — חצים למעלה ולמטה": "Move {name} — up and down arrows",
+"הזז את האפשרות — חצים למעלה ולמטה": "Move the option — up and down arrows",
+"הסר את {name} מהפרויקט": "Remove {name} from the project",
+"להסיר את {row} מהפרויקט?": "Remove {row} from the project?",
+"יוסרו מהפרויקט ב-KKarcDB: {names}.": "Taken off the project in KKarcDB: {names}.",
+"הם יוסרו גם מהשורות: {rows}.": "They also leave these rows: {rows}.",
+"אנשי הקשר עצמם נשארים ב-KKarcDB.": "The contacts themselves stay in KKarcDB.",
 });
 
 window.I18N_HE_EN = HE_EN;

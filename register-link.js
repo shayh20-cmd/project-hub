@@ -294,6 +294,20 @@
       .sort((a, b) => a.name.localeCompare(b.name, 'he'));
   }
 
+  /* What the consultants table's × takes off the project: the row's people (they stay in the
+     directory), their names, and the other rows that share them — those rows go too, since a row
+     is a firm's discipline and the register lists people, not rows. */
+  function removalOf(row, rows) {
+    const contacts = ((row && row.contacts) || []).filter(c => c && c.personId);
+    const personIds = [...new Set(contacts.map(c => c.personId))];
+    const ids = new Set(personIds);
+    return {
+      personIds,
+      names: [...new Set(contacts.map(c => c.name).filter(Boolean))],
+      alsoIn: (rows || []).filter(r => r && r !== row && (!row || r.id !== row.id) && (r.contacts || []).some(c => ids.has(c.personId))),
+    };
+  }
+
   /* The consultants table's add row: a discipline, an office and a name, each a list narrowed by
      what is picked in the other two and by its own search. `pick` = { discipline (register code),
      firmId, personId }; `qs` = the three searches. Only contacts addableContacts would offer count.
@@ -415,7 +429,7 @@
   /* The register, through KKarcDB.Api, as the signed-in person (spec §1). `createSupabase` is
      supabase-js's createClient and `fetchImpl` the browser's fetch — parameters so the tests can
      stand in for both. Every answer is { state, data?, subject? }, state one of ok, signed-out,
-     refused, not-found, unreachable (spec §6). get reads; send writes, with POST, PATCH or PUT only. */
+     refused, not-found, unreachable (spec §6). get reads; send writes, with POST, PATCH, PUT or DELETE. */
   function createRegisterClient(config, createSupabase, fetchImpl) {
     const doFetch = fetchImpl || ((url, init) => root.fetch(url, init));
     // The address as the page opened, read before supabase-js runs: on a successful return it
@@ -479,12 +493,13 @@
       }
     }
 
-    /* A write (2026-10-07 design §1): POST, PATCH or PUT only. A 409 `changed` brings what the
-       other person saved; another 409 or a 400 is the register refusing the value. */
-    const WRITES = ['POST', 'PATCH', 'PUT'];
+    /* A write (2026-10-07 design §1): POST, PATCH or PUT, and DELETE (a project's member only:
+       the consultants table's ×), which carries no body. A 409 `changed` brings what the other
+       person saved; another 409 or a 400 is the register refusing the value. */
+    const WRITES = ['POST', 'PATCH', 'PUT', 'DELETE'];
     async function send(method, path, body) {
-      if (!WRITES.includes(method)) throw new Error('register-link: only POST, PATCH and PUT are sent, not ' + method);
-      const { res, answer } = await call(path, {
+      if (!WRITES.includes(method)) throw new Error('register-link: only POST, PATCH, PUT and DELETE are sent, not ' + method);
+      const { res, answer } = await call(path, method === 'DELETE' ? { method } : {
         method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body === undefined ? null : body),
       });
       if (answer) return answer;
@@ -529,7 +544,7 @@
     matchProjects, registerCodeOf, hubDisciplineFor, disciplineMatchRows, buildConsultantRows, paletteFor, projectFacts, subjectOf, tidyReturnAddress,
     nextEntry, hasConsultants, createRegisterClient,
     isConsultant, consultantFirms, nameIn, tagLabel, canEditRegister, editablePerson, disciplineChoices,
-    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts, addRowOptions,
+    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts, addRowOptions, removalOf,
     blank, newContactBody, newFirmBody, withEdit, writeErrorOf,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;

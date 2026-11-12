@@ -30,7 +30,7 @@ body{font-family:system-ui,sans-serif;background:var(--bg);margin:0;padding:16px
 <script>
 /* The stand-in register: one project, its members, and the directory. */
 window.H = (function () {
-  const H = { calls: [], putStatus: 204, p2Status: 503, members: null };
+  const H = { calls: [], putStatus: 204, delStatus: 204, p2Status: 503, members: null };
   const json = (body, status) => Promise.resolve(new Response(body === null ? null : JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
   H.reset = () => {
     H.members = [
@@ -74,6 +74,11 @@ window.H = (function () {
     if (m && method === 'PUT') {
       if (H.putStatus === 204) H.members.push({ personId: decodeURIComponent(m[1]), name: '', isStaff: false });
       return json(null, H.putStatus);
+    }
+    if (m && method === 'DELETE') {
+      const pid = decodeURIComponent(m[1]);
+      if (H.delStatus === 204) H.members = H.members.filter(x => x.personId !== pid);
+      return json(null, H.delStatus);
     }
     return json({ error: 'unexpected ' + path }, 500);
   };
@@ -211,6 +216,27 @@ window.H = (function () {
   [...holder.querySelectorAll('.rl-btn')].find(b => b.textContent === 'נסה שוב').click();
   await until(() => fields().length === 3);
   check('retry reads it again', fields().length === 3, holder.textContent);
+
+  // The row's ×: useRemoveConsultant takes each of the row's people off the project.
+  const probe = document.createElement('div'); document.body.appendChild(probe);
+  let rm;
+  ReactDOM.createRoot(probe).render(React.createElement(function Probe() { rm = UI.useRemoveConsultant({ registerProjectId: 'p1' }); return null; }));
+  await until(() => typeof rm === 'function');
+  check('an editor gets a remover', typeof rm === 'function');
+  H.members.push({ personId: 'e', name: '', isStaff: false });
+  const reads = H.calls.filter(c => c[1] === '/api/projects/p1').length;
+  const res1 = await rm({ contacts: [{ personId: 'a' }, { personId: 'e' }, { personId: 'a' }] });
+  check('each person leaves the project once, by DELETE',
+    same(H.calls.filter(c => c[0] === 'DELETE').map(c => c[1]), ['/api/projects/p1/members/a', '/api/projects/p1/members/e']) && res1 === null,
+    JSON.stringify(H.calls.filter(c => c[0] === 'DELETE')));
+  check('they are off the project', !H.members.some(x => x.personId === 'a' || x.personId === 'e'), JSON.stringify(H.members));
+  await until(() => H.calls.filter(c => c[1] === '/api/projects/p1').length > reads);
+  check('and the project is read again', H.calls.filter(c => c[1] === '/api/projects/p1').length > reads);
+  H.delStatus = 404;
+  check('someone already gone counts as done', (await rm({ contacts: [{ personId: 'a' }] })) === null);
+  H.delStatus = 403;
+  const res3 = await rm({ contacts: [{ personId: 'b' }] });
+  check('a refusal comes back as a sentence', /אין הרשאה/.test(res3 || ''), res3);
   } catch (e) { check('the checks ran to the end', false, e && e.stack); }
 
   const failed = results.filter(r => !r.ok);
