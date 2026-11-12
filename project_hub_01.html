@@ -17354,13 +17354,15 @@ function SettingsRulesView({
    what is unclear; the person answers in free text, corrects by hand and saves. The server is
    tools/local-server/filing.js (handleHub, /api/filing-hub/*); the Outlook pane's filing card works the same way.
    Folder names, notes, Claude's words and the person's answers are data (data-i18n-skip). */
-// the areas of the folder map (as filing-ai.js AREAS): a title in English in both languages, a description under it
+// the areas of the folder map (as filing-ai.js AREAS): a title in English in both languages, a description under it;
+// hidden: not shown on the page (in every project) — its saved folders are kept
 const FOLDER_AREAS = [{
   key: 'publish',
   name: 'PUBLISH',
   desc: 'כל מסמך שאנחנו מוציאים ושולחים (כולל תיקיית הייצוא מ-Revit/CAD)'
 }, {
   key: 'work',
+  hidden: true,
   name: 'Work',
   desc: 'מסמכי עבודה שאנחנו יוצרים, בעיקר DWG ו-RVT'
 }, {
@@ -17373,14 +17375,17 @@ const FOLDER_AREAS = [{
   desc: 'כל מסמך שהתקבל ואינו מיועץ או מרשות'
 }, {
   key: 'permit',
+  hidden: true,
   name: 'Permit',
   desc: 'הגשות ומסמכי רשויות, בחלוקה לפי רשות'
 }, {
   key: 'docs',
+  hidden: true,
   name: 'Docs',
   desc: 'מסמכים כלליים'
 }, {
   key: 'exec',
+  hidden: true,
   name: 'Exec',
   desc: 'מסמכי שלב הביצוע'
 }];
@@ -20279,7 +20284,7 @@ function SettingsFoldersView({
     className: "sp-btn-sm",
     disabled: busy || !answer.trim(),
     onClick: () => mapIt(answer.trim())
-  }, "שלח"))), FOLDER_AREAS.map(a => {
+  }, "שלח"))), FOLDER_AREAS.filter(a => !a.hidden).map(a => {
     // one folder per area on the page: the first stored; the others (from Claude, or saved before) are kept as they are
     const x = areas[a.key] || {
       paths: [],
