@@ -3,23 +3,26 @@
 <head>
 <meta charset="UTF-8"/>
 <title>register-add harness</title>
-<!-- Browser checks for the consultants header's "Add" (RegisterLinkUI.AddContact in
-     register-link-ui.js), run against a stand-in register: fetch and supabase-js are replaced
-     before the module loads, so nothing reaches the register. Open it through the local server:
+<!-- Browser checks for the consultants table's add row (RegisterLinkUI.AddContact, the header's
+     button, and RegisterLinkUI.AddContactRow in register-link-ui.js), run against a stand-in
+     register: fetch and supabase-js are replaced before the module loads, so nothing reaches the
+     register. Open it through the local server:
      http://localhost:3000/tests/register-add-harness.html — the title reads "PASS n/n" or
      "FAIL …", and the list below says which check failed. -->
 <style>
 :root{--bg:#F5F6F8;--surface:#fff;--surface-2:#FAFBFC;--border:#E8EAED;--text:#1E1F21;--text-2:#6D6E6F;--text-3:#6B7280;--accent:#2563EB}
 body{font-family:system-ui,sans-serif;background:var(--bg);margin:0;padding:16px}
-.box{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-width:720px}
+.box{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-width:820px}
+.box table{width:100%;border-collapse:collapse}
+.box td{padding:6px 8px;font-size:12px;vertical-align:top}
 .ov-sec-hdr{display:flex;align-items:center;gap:7px;padding:11px 16px;font-size:13px;font-weight:700;position:relative}
-.ov-sec-add-btn{padding:3px 10px;font-size:11px;border:1px solid var(--accent);border-radius:12px;background:rgba(37,99,235,.08);color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600}
-.ov-edit-input{font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;width:100%}
+.ov-sec-add-btn{opacity:0;padding:3px 10px;font-size:11px;border:1px solid var(--accent);border-radius:12px;background:rgba(37,99,235,.08);color:var(--accent);cursor:pointer;font-family:inherit;font-weight:600}
+.ov-edit-input{font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;width:100%;box-sizing:border-box}
 #out{font:12px ui-monospace,monospace;padding:12px 0;white-space:pre-wrap}
 </style>
 </head>
 <body>
-<div class="box"><div class="ov-sec-hdr" id="host"></div></div>
+<div class="box"><div class="ov-sec-hdr" id="host"></div><table><tbody id="holder"></tbody><tbody><tr><td>existing row</td></tr></tbody></table></div>
 <pre id="out">running…</pre>
 <script src="/react-18.3.1.min.js"></script>
 <script src="/react-dom-18.3.1.min.js"></script>
@@ -37,13 +40,24 @@ window.H = (function () {
   };
   H.reset();
   H.persons = [
-    { id: 'a', name: 'Tamir Valent', nameHe: 'תמיר ולנט', firmId: 'f1', email: 'tamir@uv-eng.com', tags: { kind: ['consultant'] } },
+    { id: 'a', name: 'Tamir Valent', nameHe: 'תמיר ולנט', firmId: 'f1', email: 'tamir@uv-eng.com', mobile: '050-1', tags: { kind: ['consultant'] } },
     { id: 'b', name: 'Ilan Bar', firmId: 'f2', tags: { kind: ['consultant'] } },
     { id: 'c', name: 'Uri Golomb', nameHe: 'אורי גולומב', firmId: 'f1', tags: { kind: ['consultant'] } },
-    { id: 'staff', name: 'Arie Hayun', nameHe: 'אריה חיון', tags: { kind: ['internal'] } },
+    { id: 'e', name: 'Noa Keshet', nameHe: 'נועה קשת', firmId: 'f3', tags: { kind: ['consultant'] } },
+    { id: 'g', name: 'Gal Or', nameHe: 'גל אור', firmId: 'f3', tags: { kind: ['consultant'] } },
+    { id: 'staff', name: 'Arie Hayun', nameHe: 'אריה חיון', tags: { kind: ['internal'], discipline: ['architecture'] } },
     { id: 'user', name: 'Login Only', isContact: false, tags: {} },
   ];
-  H.firms = [{ id: 'f1', name: 'UV Engineering', nameHe: 'יו.וי הנדסה', tags: {} }, { id: 'f2', name: 'Datamap', tags: {} }];
+  H.firms = [
+    { id: 'f1', name: 'UV Engineering', nameHe: 'יו.וי הנדסה', tags: { discipline: ['structural'] } },
+    { id: 'f2', name: 'Datamap', tags: { discipline: ['acoustics'] } },
+    { id: 'f3', name: 'Arc Studio', nameHe: 'סטודיו קשת', tags: { discipline: ['architecture', 'structural'] } },
+  ];
+  H.tags = [
+    { typeCode: 'discipline', code: 'architecture', nameHe: 'אדריכלות', nameEn: 'Architecture', sortOrder: 10 },
+    { typeCode: 'discipline', code: 'structural', nameHe: 'קונסטרוקציה', nameEn: 'Structural', sortOrder: 20 },
+    { typeCode: 'discipline', code: 'acoustics', nameHe: 'אקוסטיקה', nameEn: 'Acoustics', sortOrder: 5 },
+  ];
   window.fetch = (url, init) => {
     const method = (init && init.method) || 'GET';
     const u = String(url);
@@ -53,7 +67,7 @@ window.H = (function () {
     if (path === '/api/me') return json({ role: 'editor' });
     if (path === '/api/persons') return json(H.persons);
     if (path === '/api/firms') return json(H.firms);
-    if (path === '/api/tags') return json([]);
+    if (path === '/api/tags') return json(H.tags);
     if (path === '/api/projects/p1') return json({ id: 'p1', code: '26-001', members: H.members.slice() });
     if (path === '/api/projects/p2') return H.p2Status === 200 ? json({ id: 'p2', code: '26-002', members: [] }) : json(null, H.p2Status);
     const m = path.match(/^\/api\/projects\/p1\/members\/([^/]+)$/);
@@ -79,89 +93,125 @@ window.H = (function () {
 <script>
 (async function () {
   const UI = window.RegisterLinkUI;
+  // A page without the window's focus (a background tab, a preview pane) fires no focus events on
+  // focus(); fire them as a focused window would, since the row's lists open on focus.
+  const realFocus = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function (o) {
+    const was = document.activeElement;
+    realFocus.call(this, o);
+    if (document.hasFocus() || document.activeElement !== this || was === this) return;
+    if (was && was !== document.body) was.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: this }));
+    this.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: was }));
+  };
   const host = document.getElementById('host');
+  const holder = document.getElementById('holder');
   const tick = (ms = 40) => new Promise(r => setTimeout(r, ms));
   const until = async (fn, ms = 2000) => { for (let t = 0; t < ms; t += 20) { const v = fn(); if (v) return v; await tick(20); } return fn(); };
-  const setValue = (el, v) => {
+  const type = (el, v) => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
     el.dispatchEvent(new Event('input', { bubbles: true }));
   };
+  const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
   const btn = () => host.querySelector('.ov-sec-add-btn');
-  const pop = () => document.querySelector('.rl-add-pop');
-  const names = () => [...document.querySelectorAll('.rl-add-name')].map(e => e.textContent);
-  const firms = () => [...document.querySelectorAll('.rl-add-firm')].map(e => e.textContent);
+  const row = () => document.querySelector('.rl-addrow');
+  const fields = () => (row() ? [...row().querySelectorAll('input')] : []);
+  const values = () => fields().map(f => f.value).join('|');
+  const list = () => document.querySelector('.rl-combo-list');
+  const opts = () => (list() ? [...list().querySelectorAll('[role=option]')].map(o => o.textContent) : []);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const results = [];
   const check = (name, ok, detail) => results.push({ name, ok: !!ok, detail });
+  const hub = [{ id: 'STRC' }, { id: 'ARCH' }];
 
-  const root = ReactDOM.createRoot(host);
-  root.render(React.createElement(React.Fragment, null, 'יועצים ומתכננים', React.createElement(UI.AddContact, { data: { registerProjectId: 'p1' } })));
+  ReactDOM.createRoot(host).render(React.createElement(React.Fragment, null, 'יועצים ומתכננים', React.createElement(UI.AddContact, { data: { registerProjectId: 'p1' } })));
+  const rowRoot = ReactDOM.createRoot(holder);
+  const renderRow = id => rowRoot.render(React.createElement(UI.AddContactRow, { data: { registerProjectId: id }, hubDisciplines: hub, colSpan: 6 }));
+  renderRow('p1');
 
+  try {
   await until(btn);
-  check('an editor sees one button, reading הוספה', btn() && btn().textContent === 'הוספה' && host.querySelectorAll('button').length === 1, btn() && btn().textContent);
-  check('nothing reads Edit in KK Hub', !/KK Hub/.test(host.textContent), host.textContent);
+  check('the button reads הוספה and shows without hovering', btn() && btn().textContent === 'הוספה' && getComputedStyle(btn()).opacity === '1', btn() && getComputedStyle(btn()).opacity);
+  check('no row until it is pressed', !row());
 
   btn().click();
-  await until(() => names().length);
-  const input = pop() && pop().querySelector('input');
-  check('the list opens with the search as its first line', pop() && pop().firstElementChild === input, pop() && pop().firstElementChild && pop().firstElementChild.tagName);
-  check('the search has the focus', document.activeElement === input);
-  check('it lists the contacts not on the project, office staff and sign-ins left out',
-    JSON.stringify(names()) === JSON.stringify(['תמיר ולנט', 'Ilan Bar']), JSON.stringify(names()));
-  check('names and offices are in Hebrew, English only when there is no Hebrew',
-    JSON.stringify(firms()) === JSON.stringify(['יו.וי הנדסה', 'Datamap']), JSON.stringify(firms()));
-  check('names and offices are not translated by the page', [...document.querySelectorAll('.rl-add-name,.rl-add-firm')].every(e => e.hasAttribute('data-i18n-skip')));
+  await until(() => fields().length === 3 && list());
+  check('a row opens at the top of the table', row() && holder.firstElementChild === row());
+  check('discipline, office and name start empty', values() === '||', values());
+  check('the discipline has the focus, its list open', document.activeElement === fields()[0] && !!list());
+  check('the disciplines: hub codes in hub order, then the rest; staff-only ones left out',
+    same(opts(), ['STRCקונסטרוקציהStructural', 'ARCHאדריכלותArchitecture', 'אקוסטיקהAcoustics']), JSON.stringify(opts()));
+  check('register names in the list are not translated by the page', list() && [...list().querySelectorAll('[role=option]')].every(o => o.querySelector('[data-i18n-skip]')));
 
-  setValue(input, 'tamir'); await tick();
-  check('an English search finds the Hebrew-named contact', JSON.stringify(names()) === JSON.stringify(['תמיר ולנט']), JSON.stringify(names()));
-  setValue(input, 'ולנט'); await tick();
-  check('a Hebrew search finds it too', JSON.stringify(names()) === JSON.stringify(['תמיר ולנט']), JSON.stringify(names()));
-  setValue(input, 'uv engineering'); await tick();
-  check('the office\'s English name finds it', JSON.stringify(names()) === JSON.stringify(['תמיר ולנט']), JSON.stringify(names()));
-  setValue(input, 'zzz'); await tick();
-  check('no match says so', /אין אנשי קשר תואמים/.test(pop().textContent), pop().textContent);
-  setValue(input, ''); await tick();
+  type(fields()[0], 'arch'); await tick();
+  check('typing narrows the list', same(opts(), ['ARCHאדריכלותArchitecture']), JSON.stringify(opts()));
+  key(fields()[0], 'Enter'); await tick(60);
+  check('Enter picks the first one', fields()[0].value === 'ARCH · אדריכלות', fields()[0].value);
+  check('and moves to the office, its list open', document.activeElement === fields()[1] && !!list());
+  check('the office list holds only offices with that discipline', same(opts(), ['סטודיו קשת']), JSON.stringify(opts()));
+  key(fields()[1], 'Enter'); await tick(60);
+  check("the name list holds only that office's people",
+    document.activeElement === fields()[2] && same(opts(), ['גל אורסטודיו קשת', 'נועה קשתסטודיו קשת']), JSON.stringify(opts()));
+  key(fields()[2], 'ArrowDown'); await tick();
+  key(fields()[2], 'Enter'); await tick(60);
+  check('the arrows move through the list', fields()[2].value === 'נועה קשת', fields()[2].value);
+  const save = () => row().querySelector('.ov-row-save-btn');
+  check('a name moves the focus to ✓', document.activeElement === save() && !save().disabled);
+
+  type(fields()[1], ''); await tick();
+  check('clearing the office clears the name', fields()[2].value === '' && save().disabled, fields()[2].value);
+  key(fields()[1], 'Escape'); await tick();
+  type(fields()[0], ''); await tick();
+  key(fields()[0], 'Escape'); await tick();
+  check('Escape shuts the list first, the row stays', !!row() && !list());
+
+  fields()[2].focus(); await tick();
+  type(fields()[2], 'tamir'); await tick();
+  key(fields()[2], 'Enter'); await tick(60);
+  check('a name picked first fills its office and its one discipline',
+    values() === 'STRC · קונסטרוקציה|יו.וי הנדסה|תמיר ולנט', values());
+  check('and shows its phone and email', /050-1/.test(row().textContent) && /tamir@uv-eng\.com/.test(row().textContent), row().textContent);
 
   H.putStatus = 403;
-  [...document.querySelectorAll('.rl-add-item')][1].click();
+  save().click();
   await until(() => document.querySelector('.rl-add-error'));
-  check('a refusal is said in the list, which stays open', pop() && /אין הרשאה/.test((document.querySelector('.rl-add-error') || {}).textContent || ''),
-    (document.querySelector('.rl-add-error') || {}).textContent);
+  const errText = () => (document.querySelector('.rl-add-error') || {}).textContent || '';
+  check('a refusal is said under the row, which keeps its picks', /אין הרשאה/.test(errText()) && fields()[2].value === 'תמיר ולנט', errText());
 
   H.putStatus = 204;
   const before = H.calls.filter(c => c[1] === '/api/projects/p1').length;
-  [...document.querySelectorAll('.rl-add-item')][0].click();
-  await until(() => !pop());
-  check('picking someone puts them on the project in the register', H.calls.some(c => c[0] === 'PUT' && c[1] === '/api/projects/p1/members/a'),
+  save().click();
+  await until(() => H.calls.some(c => c[0] === 'PUT' && c[1] === '/api/projects/p1/members/a'));
+  check('✓ puts the person on the project in the register', H.calls.some(c => c[0] === 'PUT' && c[1] === '/api/projects/p1/members/a'),
     JSON.stringify(H.calls.filter(c => c[0] === 'PUT')));
-  check('and closes the list', !pop());
+  await until(() => values() === '||');
+  check('the row empties for the next one', values() === '||' && !document.querySelector('.rl-add-error'), values());
   await until(() => H.calls.filter(c => c[1] === '/api/projects/p1').length > before);
   check('the project is read again', H.calls.filter(c => c[1] === '/api/projects/p1').length > before);
-
   await tick(100);
-  btn().click();
-  await until(() => names().length);
-  check('someone added leaves the list', JSON.stringify(names()) === JSON.stringify(['Ilan Bar']), JSON.stringify(names()));
-  document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  await tick();
-  check('Escape closes it', !pop());
-  btn().click(); await until(pop);
-  document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-  await tick();
-  check('a click outside closes it', !pop());
+  fields()[2].focus(); await until(list);
+  check('someone added leaves the list', !opts().some(t => /תמיר/.test(t)) && opts().length === 3, JSON.stringify(opts()));
+  key(fields()[2], 'Escape'); await tick();
+  key(fields()[2], 'Escape'); await tick();
+  check('Escape with the list shut closes the row', !row());
+  btn().click(); await until(row);
+  btn().click(); await tick();
+  check('the button closes it too', !row() && !list());
 
-  // A second project whose first read fails: the list says so and offers a retry.
+  // A second project whose first read fails: the row says so and offers a retry.
   const host2 = document.createElement('div'); host2.className = 'ov-sec-hdr'; document.querySelector('.box').appendChild(host2);
   ReactDOM.createRoot(host2).render(React.createElement(UI.AddContact, { data: { registerProjectId: 'p2' } }));
+  renderRow('p2');
   const btn2 = await until(() => host2.querySelector('.ov-sec-add-btn'));
   await until(() => H.calls.some(c => c[1] === '/api/projects/p2'));
   await tick(100);
-  btn2.click(); await until(pop);
+  btn2.click(); await until(() => /המאגר לא עונה/.test(holder.textContent));
   check('a failed first read says so, with a retry, instead of loading forever',
-    /המאגר לא עונה/.test(pop().textContent) && !/טוען/.test(pop().textContent), pop().textContent);
+    /המאגר לא עונה/.test(holder.textContent) && !/טוען/.test(holder.textContent), holder.textContent);
   H.p2Status = 200;
-  [...pop().querySelectorAll('.rl-btn')].find(b => b.textContent === 'נסה שוב').click();
-  await until(() => pop() && names().length);
-  check('retry reads it again', pop() && !/המאגר לא עונה/.test(pop().textContent) && names().length === 3, pop() && pop().textContent);
+  [...holder.querySelectorAll('.rl-btn')].find(b => b.textContent === 'נסה שוב').click();
+  await until(() => fields().length === 3);
+  check('retry reads it again', fields().length === 3, holder.textContent);
+  } catch (e) { check('the checks ran to the end', false, e && e.stack); }
 
   const failed = results.filter(r => !r.ok);
   document.title = failed.length ? 'FAIL ' + failed.map(r => r.name).join('; ') : 'PASS ' + results.length + '/' + results.length;

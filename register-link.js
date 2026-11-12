@@ -294,6 +294,69 @@
       .sort((a, b) => a.name.localeCompare(b.name, 'he'));
   }
 
+  /* The consultants table's add row: a discipline, an office and a name, each a list narrowed by
+     what is picked in the other two and by its own search. `pick` = { discipline (register code),
+     firmId, personId }; `qs` = the three searches. Only contacts addableContacts would offer count.
+     A contact's disciplines are its firm's, its own when the firm has none — as in the table. The
+     disciplines come in the table's order: the hub's codes in the hub's order, then the rest in
+     the register's. Names are Hebrew first, as in the table; searches find either language. */
+  function addRowOptions(persons, firms, tags, members, hubDisciplines, pick, qs) {
+    const pk = pick || {};
+    const q = qs || {};
+    const firmById = new Map((firms || []).map(f => [f.id, f]));
+    const onProject = new Set((members || []).map(m => m.personId));
+    const discTags = (tags || []).filter(t => t.typeCode === 'discipline');
+    const tagByCode = new Map(discTags.map(t => [t.code, t]));
+    const hubOrder = new Map((hubDisciplines || []).map((d, i) => [d.id, i]));
+    const contacts = (persons || [])
+      .filter(p => p.isContact !== false && !tagsOf(p, 'kind').includes('internal') && !onProject.has(p.id) && nameIn(p, 'he'))
+      .map(p => {
+        const firm = (p.firmId && firmById.get(p.firmId)) || null;
+        return { p, firm, discs: tagsOf(firm, 'discipline').length ? tagsOf(firm, 'discipline') : tagsOf(p, 'discipline') };
+      });
+    const fits = (c, skip) => (skip === 'discipline' || !pk.discipline || c.discs.includes(pk.discipline))
+      && (skip === 'firm' || !pk.firmId || (c.firm && c.firm.id) === pk.firmId)
+      && (skip === 'person' || !pk.personId || c.p.id === pk.personId);
+
+    const codes = new Set();
+    contacts.filter(c => fits(c, 'discipline')).forEach(c => c.discs.forEach(d => codes.add(d)));
+    const needleD = needleOf(q.discipline);
+    const disciplines = [...codes].map(code => {
+      const tag = tagByCode.get(code) || null;
+      const hubCode = hubDisciplineFor(code, hubDisciplines);
+      return {
+        code, hubCode,
+        nameHe: (tag && (tag.nameHe || tag.nameEn)) || code,
+        nameEn: (tag && tag.nameEn) || '',
+        color: (tag && tag.color) || null,
+        rank: hubCode ? hubOrder.get(hubCode) : 1000 + (tag ? tag.sortOrder || 0 : 99999),
+      };
+    })
+      .filter(d => hit(needleD, [d.code, d.hubCode, d.nameHe, d.nameEn]))
+      .sort((a, b) => a.rank - b.rank || a.nameHe.localeCompare(b.nameHe, 'he'))
+      .map(({ rank, ...d }) => d);
+
+    const firmSeen = new Map();
+    contacts.filter(c => c.firm && fits(c, 'firm')).forEach(c => firmSeen.set(c.firm.id, c.firm));
+    const needleF = needleOf(q.firm);
+    const firmList = [...firmSeen.values()]
+      .filter(f => hit(needleF, [f.name, f.nameHe]))
+      .map(f => ({ id: f.id, name: nameIn(f, 'he') }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+    const needleP = needleOf(q.person);
+    const people = contacts.filter(c => fits(c, 'person'))
+      .filter(c => hit(needleP, [c.p.name, c.p.nameHe, c.p.email, c.p.phone, c.p.mobile]))
+      .map(c => ({
+        id: c.p.id, name: nameIn(c.p, 'he'),
+        firm: c.firm ? nameIn(c.firm, 'he') : String(c.p.firmName || '').trim(), firmId: c.firm ? c.firm.id : null,
+        disciplines: c.discs.slice(), mobile: c.p.mobile || c.p.phone || '', email: c.p.email || '',
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+    return { disciplines, firms: firmList, people };
+  }
+
   const blank = v => {
     const s = String(v == null ? '' : v).trim();
     return s === '' ? null : s;
@@ -466,7 +529,7 @@
     matchProjects, registerCodeOf, hubDisciplineFor, disciplineMatchRows, buildConsultantRows, paletteFor, projectFacts, subjectOf, tidyReturnAddress,
     nextEntry, hasConsultants, createRegisterClient,
     isConsultant, consultantFirms, nameIn, tagLabel, canEditRegister, editablePerson, disciplineChoices,
-    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts,
+    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts, addRowOptions,
     blank, newContactBody, newFirmBody, withEdit, writeErrorOf,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;

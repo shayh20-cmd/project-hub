@@ -33,6 +33,13 @@
     '.rl-add-item:disabled{cursor:default;opacity:.7}',
     '.rl-add-firm{font-size:11px;color:var(--text-3)}',
     '.rl-add-error{margin:0 8px 8px;font-size:12px;color:var(--red,#dc2626)}',
+    '.rl-combo-list{padding:4px 0;overflow-y:auto;overscroll-behavior:contain}',
+    '.rl-combo-opt{flex:none;padding:6px 10px;font-size:12px;cursor:pointer;color:var(--text);text-align:start}',
+    '.rl-combo-opt.on{background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent)}',
+    '[dir=rtl] .rl-combo-opt.on{box-shadow:inset -3px 0 0 var(--accent)}',
+    '.rl-combo-row{display:flex;align-items:center;gap:6px;min-width:0}',
+    '.rl-combo-person{flex-direction:column;align-items:flex-start;gap:1px}',
+    '.rl-addrow .ov-row-save-btn:disabled{opacity:.35;cursor:default}',
     '.rl-dm{flex:none;margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:12px}',
     '.rl-dm-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 10px;font-weight:700;font-size:12px;color:var(--text)}',
     '.rl-dm-note{font-weight:400;font-size:11px;color:var(--text-3)}',
@@ -52,7 +59,7 @@
   let client = null;
   let hubUrl = null;
   let recheck = () => Promise.resolve();
-  let snap = { config: 'loading', signedIn: false, directory: null, projects: {}, me: null };
+  let snap = { config: 'loading', signedIn: false, directory: null, projects: {}, me: null, adding: null };
   const listeners = new Set();
   const set = patch => { snap = Object.assign({}, snap, patch); listeners.forEach(l => l()); };
   const subscribe = l => { listeners.add(l); return () => listeners.delete(l); };
@@ -299,89 +306,206 @@
     return pending ? pending.then(() => loadProject(id), () => loadProject(id)) : loadProject(id);
   }
 
-  /* The consultants header's "Add": every contact in the register not yet on the project, the
-     search on the first line, and a pick puts that person on the project in the register. For
-     the register's editors only (it refuses anyone else). The list is fixed to the window, since
-     the section clips what overflows it. */
+  /* The consultants header's "Add" (register editors only; the register refuses anyone else). It
+     opens a row at the top of the table — RegisterLinkUI.AddContactRow — and closes it again. */
   function AddContact({ data }) {
     const s = useLinked(data);
     const id = data && data.registerProjectId;
-    const [open, setOpen] = useState(null);
-    const [q, setQ] = useState('');
-    const [busy, setBusy] = useState(null);
-    const [error, setError] = useState(null);
-    const wrap = useRef(null);
     const ready = s.config === 'on' && s.signedIn && !!id;
     const haveMe = !!s.me;
     useEffect(() => { if (ready && !haveMe) loadMe(); }, [ready, haveMe]);
+    if (!ready || !(s.me && s.me.state === 'ok' && RL.canEditRegister(s.me.data.role))) return null;
+    const open = s.adding === id;
+    return h('button', {
+      type: 'button', className: 'ov-sec-add-btn', style: { opacity: 1 }, 'aria-expanded': open,
+      onClick: () => set({ adding: open ? null : id }),
+    }, 'הוספה');
+  }
+
+  /* One field of the add row: an input whose list opens on focus, narrows as you type, and takes
+     its first entry on Enter (the arrows move through it). `label` is the pick's text, `onQuery`
+     hands the search to the caller, who narrows `options`; `onDone` follows a pick (the next
+     field), `onEscape` an Escape with the list shut. The list is fixed to the window, above the
+     field when there is no room below, since the table's box clips what overflows it. */
+  function Combo({ label, options, keyOf, textOf, renderOption, onPick, onClear, onQuery, onDone, onEscape, placeholder, inputRef }) {
+    const [editing, setEditing] = useState(false);
+    const [text, setText] = useState('');
+    const [pos, setPos] = useState(null);
+    const [hi, setHi] = useState(0);
+    const own = useRef(null);
+    const list = useRef(null);
+    const ref = inputRef || own;
+    const place = () => {
+      const el = ref.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const width = Math.min(Math.max(r.width, 260), window.innerWidth - 16);
+      const rtl = getComputedStyle(el).direction === 'rtl';
+      const left = Math.max(8, Math.min(rtl ? r.right - width : r.left, window.innerWidth - width - 8));
+      const below = window.innerHeight - r.bottom - 8;
+      const up = below < 200 && r.top - 8 > below;
+      setPos(up
+        ? { left, width, bottom: window.innerHeight - r.top + 4, maxHeight: Math.min(300, r.top - 12) }
+        : { left, width, top: r.bottom + 4, maxHeight: Math.min(300, below - 4) });
+    };
+    const shut = () => { setPos(null); setEditing(false); onQuery(''); };
+    // A scroll outside the list (the page, the table, or focus() bringing the field into view)
+    // moves the list with its field; it shuts only once the field has left the window.
+    const isOpen = !!pos;
     useEffect(() => {
-      if (!open) return undefined;
-      const away = e => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(null); };
-      const esc = e => { if (e.key === 'Escape') setOpen(null); };
-      const shut = () => setOpen(null);
-      // The list is fixed to the window, so scrolling the page under it closes it; its own list scrolls.
-      const scrolled = e => { if (!(wrap.current && e.target instanceof Node && wrap.current.contains(e.target))) setOpen(null); };
-      document.addEventListener('mousedown', away);
-      document.addEventListener('keydown', esc);
+      if (!isOpen) return undefined;
+      const scrolled = e => {
+        if (list.current && e.target instanceof Node && list.current.contains(e.target)) return;
+        const r = ref.current && ref.current.getBoundingClientRect();
+        if (!r || r.bottom < 0 || r.top > window.innerHeight) shut(); else place();
+      };
       window.addEventListener('resize', shut);
       window.addEventListener('scroll', scrolled, true);
-      return () => {
-        document.removeEventListener('mousedown', away);
-        document.removeEventListener('keydown', esc);
-        window.removeEventListener('resize', shut);
-        window.removeEventListener('scroll', scrolled, true);
-      };
-    }, [open]);
+      return () => { window.removeEventListener('resize', shut); window.removeEventListener('scroll', scrolled, true); };
+    }, [isOpen]);
+    useEffect(() => { setHi(0); }, [options.length]);
+    useEffect(() => {
+      const el = list.current && list.current.querySelector('[aria-selected="true"]');
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+    }, [hi]);
+    const pick = o => { onPick(o); shut(); if (onDone) onDone(o); };
+    const onKeyDown = e => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!pos) { place(); return; }
+        const n = options.length;
+        if (n) setHi(i => (i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (pos && options.length) pick(options[Math.min(hi, options.length - 1)]);
+        else if (!pos && label && onDone) onDone(null);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        if (pos) shut(); else if (onEscape) onEscape();
+      } else if (e.key === 'Tab') {
+        shut();
+      }
+    };
+    return h(React.Fragment, null,
+      h('input', {
+        ref, className: 'ov-edit-input rl-combo', value: editing ? text : label, placeholder,
+        role: 'combobox', 'aria-expanded': !!pos, 'aria-autocomplete': 'list', autoComplete: 'off',
+        onFocus: e => { e.target.select(); place(); },
+        onClick: () => { if (!pos) place(); },
+        onBlur: shut,
+        onChange: e => {
+          const v = e.target.value;
+          setText(v); setEditing(true); onQuery(v); setHi(0);
+          if (!pos) place();
+          if (!v.trim() && label) onClear();
+        },
+        onKeyDown,
+      }),
+      pos ? ReactDOM.createPortal(h('div', {
+        ref: list, className: 'rl-add-pop rl-combo-list', role: 'listbox',
+        style: { left: pos.left, top: pos.top, bottom: pos.bottom, width: pos.width, maxHeight: pos.maxHeight },
+        // a press in the list must not blur the field before the click lands
+        onMouseDown: e => e.preventDefault(),
+      },
+      options.length ? options.map((o, i) => h('div', {
+        key: keyOf(o), role: 'option', 'aria-selected': i === hi,
+        className: 'rl-combo-opt' + (i === hi ? ' on' : ''),
+        onMouseEnter: () => setHi(i), onClick: () => pick(o),
+      }, renderOption ? renderOption(o) : h('span', { 'data-i18n-skip': '' }, textOf(o))))
+        : h('div', { className: 'rl-muted' }, 'אין תוצאות')), document.body) : null);
+  }
+
+  /* The add row: a discipline, an office and a name, each list narrowed by the other two picks
+     (RL.addRowOptions). Picking a name fills its office, and its discipline when it has just one;
+     ✓ puts that person on the project in the register, and the row empties for the next one. */
+  function AddContactRow({ data, hubDisciplines, colSpan }) {
+    const s = useLinked(data);
+    const id = data && data.registerProjectId;
+    const open = !!id && s.adding === id;
+    const [pk, setPk] = useState({});
+    const [qs, setQs] = useState({});
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const refs = { discipline: useRef(null), firm: useRef(null), person: useRef(null), save: useRef(null) };
     const p = id ? s.projects[id] : null;
     const d = s.directory;
-    const list = useMemo(() => (open && p && p.state === 'ok' && d && d.state === 'ok'
-      ? RL.addableContacts(d.data.persons, d.data.firms, p.data.members, q) : []), [open, p, d, q]);
-    if (!ready || !(s.me && s.me.state === 'ok' && RL.canEditRegister(s.me.data.role))) return null;
-
-    const toggle = e => {
-      if (open) { setOpen(null); return; }
-      const r = e.currentTarget.getBoundingClientRect();
-      const width = Math.min(340, window.innerWidth - 16);
-      const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
-      const left = Math.max(8, Math.min(rtl ? r.right - width : r.left, window.innerWidth - width - 8));
-      const top = r.bottom + 4;
-      setQ(''); setError(null);
-      setOpen({ left, top, width, maxHeight: Math.max(160, Math.min(380, window.innerHeight - top - 8)) });
-    };
-    const pick = person => {
-      if (busy) return;
-      setBusy(person.id); setError(null);
+    const ok = !!(p && p.state === 'ok' && d && d.state === 'ok');
+    const optionsFor = q => RL.addRowOptions(d.data.persons, d.data.firms, d.data.tags, p.data.members, hubDisciplines, pk, q);
+    const base = useMemo(() => (open && ok ? optionsFor({}) : null), [open, ok, p, d, hubDisciplines, pk]);
+    const opts = useMemo(() => (open && ok ? optionsFor(qs) : null), [open, ok, p, d, hubDisciplines, pk, qs]);
+    useEffect(() => { if (!open) { setPk({}); setQs({}); setError(null); setBusy(false); } }, [open]);
+    useEffect(() => { if (open && ok && refs.discipline.current) refs.discipline.current.focus(); }, [open, ok]);
+    if (!open) return null;
+    const cols = colSpan || 6;
+    const close = () => set({ adding: null });
+    if (!ok) {
+      const readFailed = [p, d].some(e => e && e.state !== 'ok');
+      return h('tr', { className: 'ov-row-editing' }, h('td', { colSpan: cols, className: 'rl-cell' }, readFailed
+        ? line('המאגר לא עונה', button('נסה שוב', () => retry(id)), button('ביטול', close))
+        : line('טוען…')));
+    }
+    const query = key => v => setQs(q => Object.assign({}, q, { [key]: v }));
+    const focus = key => () => setTimeout(() => { if (refs[key].current) refs[key].current.focus(); }, 0);
+    const disc = base.disciplines.find(x => x.code === pk.discipline) || null;
+    const firm = base.firms.find(x => x.id === pk.firmId) || null;
+    const person = base.people.find(x => x.id === pk.personId) || null;
+    const discText = x => (x.hubCode ? x.hubCode + ' · ' : '') + x.nameHe;
+    const chip = x => (k => ({ background: 'var(--disc-' + k + '-bg)', color: 'var(--disc-' + k + ')' }))(x.hubCode || RL.paletteFor(x.color));
+    const add = () => {
+      if (!person || busy) return;
+      setBusy(true); setError(null);
       client.send('PUT', '/api/projects/' + encodeURIComponent(id) + '/members/' + encodeURIComponent(person.id), null)
         .then(r => {
-          setBusy(null);
+          setBusy(false);
           if (r.state === 'signed-out') recheck();
-          if (r.state === 'ok') { setOpen(null); reloadProject(id); return; }
+          if (r.state === 'ok') { setPk({}); setQs({}); reloadProject(id); focus('discipline')(); return; }
           setError(RL.writeErrorOf(r).text);
-        }, () => { setBusy(null); setError(RL.writeErrorOf({ state: 'unreachable' }).text); });
+        }, () => { setBusy(false); setError(RL.writeErrorOf({ state: 'unreachable' }).text); });
     };
-    const directoryReady = d && d.state === 'ok' && p && p.state === 'ok';
-    const readFailed = [p, d].some(e => e && e.state !== 'ok');
-    return h('span', { ref: wrap, style: { display: 'inline-flex' } },
-      h('button', { type: 'button', className: 'ov-sec-add-btn', style: open ? { opacity: 1 } : null, onClick: toggle, 'aria-expanded': !!open }, 'הוספה'),
-      open ? h('div', {
-        className: 'rl-add-pop', role: 'dialog',
-        style: { left: open.left, top: open.top, width: open.width, maxHeight: open.maxHeight },
-      },
-      h('input', {
-        className: 'ov-edit-input rl-add-search', autoFocus: true, value: q, type: 'search',
-        placeholder: 'חיפוש לפי שם או משרד', onChange: e => setQ(e.target.value),
-      }),
-      error ? h('div', { className: 'rl-add-error' }, error) : null,
-      h('div', { className: 'rl-add-list' },
-        readFailed ? h('div', { className: 'rl-line rl-muted' }, 'המאגר לא עונה', button('נסה שוב', () => retry(id))) : null,
-        !directoryReady && !readFailed ? h('div', { className: 'rl-muted' }, 'טוען…') : null,
-        directoryReady && !list.length ? h('div', { className: 'rl-muted' }, 'אין אנשי קשר תואמים') : null,
-        list.map(c => h('button', {
-          key: c.id, type: 'button', className: 'rl-pick rl-add-item', disabled: !!busy, onClick: () => pick(c),
-        },
-        h('span', { className: 'rl-add-name', 'data-i18n-skip': '' }, c.name),
-        c.firm ? h('span', { className: 'rl-add-firm', 'data-i18n-skip': '' }, c.firm) : null,
-        busy === c.id ? h('span', { className: 'rl-muted' }, 'מוסיף…') : null)))) : null);
+    const skip = { 'data-i18n-skip': '' };
+    return h(React.Fragment, null,
+      h('tr', { className: 'ov-row-editing rl-addrow' },
+        h('td', null, h(Combo, {
+          inputRef: refs.discipline, placeholder: 'תחום', label: disc ? discText(disc) : '',
+          options: opts.disciplines, keyOf: x => x.code, textOf: discText,
+          renderOption: x => h('span', Object.assign({ className: 'rl-combo-row' }, skip),
+            h('span', { className: 'ov-con-disc-chip', style: chip(x) }, x.hubCode || x.nameHe),
+            x.hubCode ? h('span', null, x.nameHe) : null,
+            x.nameEn ? h('span', { className: 'rl-add-firm' }, x.nameEn) : null),
+          onPick: x => setPk(v => Object.assign({}, v, { discipline: x.code })),
+          onClear: () => setPk(v => Object.assign({}, v, { discipline: null })),
+          onQuery: query('discipline'), onDone: focus('firm'), onEscape: close,
+        })),
+        h('td', null, h(Combo, {
+          inputRef: refs.firm, placeholder: 'משרד', label: firm ? firm.name : '',
+          options: opts.firms, keyOf: x => x.id, textOf: x => x.name,
+          onPick: x => setPk(v => Object.assign({}, v, { firmId: x.id })),
+          // a name belongs to its office: clearing the office clears the name too
+          onClear: () => setPk(v => Object.assign({}, v, { firmId: null, personId: null })),
+          onQuery: query('firm'), onDone: focus('person'), onEscape: close,
+        })),
+        h('td', null, h(Combo, {
+          inputRef: refs.person, placeholder: 'שם', label: person ? person.name : '',
+          options: opts.people, keyOf: x => x.id, textOf: x => x.name,
+          renderOption: x => h('span', Object.assign({ className: 'rl-combo-row rl-combo-person' }, skip),
+            h('span', null, x.name), x.firm ? h('span', { className: 'rl-add-firm' }, x.firm) : null),
+          onPick: x => setPk(v => Object.assign({}, v, {
+            personId: x.id, firmId: x.firmId,
+            discipline: v.discipline || (x.disciplines.length === 1 ? x.disciplines[0] : null),
+          })),
+          onClear: () => setPk(v => Object.assign({}, v, { personId: null })),
+          onQuery: query('person'), onDone: focus('save'), onEscape: close,
+        })),
+        h('td', null, h('div', Object.assign({ className: 'ov-con-sub' }, skip), person && person.mobile ? person.mobile : '—')),
+        h('td', null, h('div', Object.assign({ className: 'ov-con-sub' }, skip), person && person.email ? person.email : '—')),
+        h('td', { className: 'ov-row-actions' },
+          h('button', {
+            ref: refs.save, type: 'button', className: 'ov-row-save-btn', disabled: !person || busy,
+            title: busy ? 'מוסיף…' : 'הוספה לפרויקט', 'aria-label': 'הוספה לפרויקט', onClick: add,
+            onKeyDown: e => { if (e.key === 'Escape') close(); },
+          }, '✓'),
+          h('button', { type: 'button', className: 'ov-row-del-btn', title: 'ביטול', 'aria-label': 'ביטול', onClick: close }, '×'))),
+      error ? h('tr', null, h('td', { colSpan: cols }, h('div', { className: 'rl-add-error', role: 'alert' }, error))) : null);
   }
 
   /* Spec §2: a never-linked project whose code names exactly one register project is linked to
@@ -489,7 +613,7 @@
   const retryMe = () => { if (snap.me && snap.me.state !== 'ok') set({ me: null }); };
 
   window.RegisterLinkUI = {
-    useConsultantRows, FactsCard, ConsultantsNotice, EditInHub, AddContact, AutoLink, DisciplineMatch,
+    useConsultantRows, FactsCard, ConsultantsNotice, EditInHub, AddContact, AddContactRow, AutoLink, DisciplineMatch,
     useDirectory, directoryStatus, DirectoryNotice, write, hubLink, retryMe,
   };
   boot();

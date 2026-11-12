@@ -4104,6 +4104,7 @@ Object.assign(HE_EN, {
 "ללא התאמה": "No match",
 "ללא קוד": "No code",
 "תחום ב-KKarcDB": "KKarcDB discipline",
+"הוספה לפרויקט": "Add to project",
 });
 
 window.I18N_HE_EN = HE_EN;
