@@ -14,8 +14,6 @@
     GR: 'green', HYDR: 'hydrology', LIFT: 'elevators', AGRO: 'agronomy', ENVI: 'environment',
     PM: 'project_mgmt', TNDR: 'tender',
   };
-  const HUB_DISCIPLINE = {};
-  Object.keys(REGISTER_DISCIPLINE).forEach(hub => { HUB_DISCIPLINE[REGISTER_DISCIPLINE[hub]] = hub; });
 
   const NO_DISCIPLINE = 'ללא תחום';
   const STATUS_HE = { active: 'פעיל', proposal: 'הצעה', inactive: 'לא פעיל', complete: 'הסתיים', cancelled: 'בוטל' };
@@ -30,10 +28,36 @@
     return (candidates || []).filter(p => upper(p.initials) === code || upper(p.code) === code);
   }
 
+  /* The register discipline a hub discipline option stands for. The office can set it on the
+     option (`registerCode`; '' means none); an option without one falls back to the map above. */
+  function registerCodeOf(opt) {
+    if (!opt) return null;
+    if (Object.prototype.hasOwnProperty.call(opt, 'registerCode')) return opt.registerCode || null;
+    return REGISTER_DISCIPLINE[opt.id] || null;
+  }
+
   /* The hub discipline a register discipline maps to, if this project's list still has it. */
   function hubDisciplineFor(registerCode, hubDisciplines) {
-    const hub = HUB_DISCIPLINE[registerCode];
-    return hub && (hubDisciplines || []).some(d => d.id === hub) ? hub : null;
+    if (!registerCode) return null;
+    const d = (hubDisciplines || []).find(o => registerCodeOf(o) === registerCode);
+    return d ? d.id : null;
+  }
+
+  /* The match table under Settings → Fields → Discipline: each hub option beside the register
+     discipline it stands for, then the register disciplines no option claims. A register
+     discipline belongs to the first option that names it, as in hubDisciplineFor. */
+  function disciplineMatchRows(hubDisciplines, tags) {
+    const discs = (tags || []).filter(t => t.typeCode === 'discipline').slice()
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.code).localeCompare(String(b.code)));
+    const byCode = new Map(discs.map(t => [t.code, t]));
+    const claimed = new Set();
+    const rows = (hubDisciplines || []).filter(o => o && o.id).map(o => {
+      const code = registerCodeOf(o);
+      const first = !!code && !claimed.has(code);
+      if (code) claimed.add(code);
+      return { id: o.id, label: o.label || o.id, color: o.color || null, registerCode: code, tag: (code && byCode.get(code)) || null, duplicate: !!code && !first };
+    });
+    return { rows, unmatched: discs.filter(t => !claimed.has(t.code)) };
   }
 
   /* The consultants table's rows (spec §4): the project's non-staff members, one row per
@@ -69,6 +93,7 @@
             id,
             discCode,
             discipline: reg ? (tag && (tag.nameHe || tag.nameEn)) || reg : NO_DISCIPLINE,
+            color: (tag && tag.color) || null,
             firm: firm ? firm.nameHe || firm.name || '' : m.firmName || '',
             firmId: firm ? firm.id : null,
             registerDiscipline: reg,
@@ -83,6 +108,17 @@
     return [...rows.values()]
       .sort((a, b) => a.rank - b.rank || a.firm.localeCompare(b.firm, 'he'))
       .map(({ rank, ...row }) => row);
+  }
+
+  /* A discipline the hub has no code for is shown by its register name, in a chip coloured like
+     the hub discipline of the same hue: the register names one of ten colours per tag (KKarcDB
+     migration 022), none meaning grey. Gives the hub discipline whose --disc-* colours to use. */
+  const TAG_PALETTE = {
+    gray: 'LIFT', brown: 'GR', orange: 'LAND', yellow: 'ELEC', green: 'SAFE',
+    teal: 'PLUM', blue: 'ARCH', purple: 'TRAF', pink: 'ACSS', red: 'FIRE',
+  };
+  function paletteFor(color) {
+    return Object.prototype.hasOwnProperty.call(TAG_PALETTE, color) ? TAG_PALETTE[color] : 'LIFT';
   }
 
   /* Whether the consultants table has anything from the register: every non-staff member
@@ -235,6 +271,27 @@
     return consultantFirms(firms)
       .filter(f => hit(needle, [f.name, f.nameHe, f.phone, f.email, f.address].concat(disciplineWords(f, tags))))
       .sort((a, b) => nameIn(a, lang).localeCompare(nameIn(b, lang), locale(lang)));
+  }
+
+  /* The list behind a project's consultants "Add": the register's contacts who are not on the
+     project, not the office's own people (the table leaves those out) and not bare sign-ins.
+     A search finds Hebrew or English names whatever the page's language; each is shown by its
+     Hebrew name, the English one only when it has none, and so is its firm. */
+  function addableContacts(persons, firms, members, q) {
+    const firmById = new Map((firms || []).map(f => [f.id, f]));
+    const onProject = new Set((members || []).map(m => m.personId));
+    const needle = needleOf(q);
+    return (persons || [])
+      .filter(p => p.isContact !== false && !tagsOf(p, 'kind').includes('internal') && !onProject.has(p.id) && nameIn(p, 'he'))
+      .filter(p => {
+        const firm = firmById.get(p.firmId) || {};
+        return hit(needle, [p.name, p.nameHe, firm.name, firm.nameHe, p.firmName, p.email, p.phone, p.mobile]);
+      })
+      .map(p => {
+        const firm = firmById.get(p.firmId);
+        return { id: p.id, name: nameIn(p, 'he'), firm: firm ? nameIn(firm, 'he') : String(p.firmName || '').trim() };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
   }
 
   const blank = v => {
@@ -406,10 +463,10 @@
 
   const api = {
     REGISTER_DISCIPLINE, NO_DISCIPLINE, STATUS_HE,
-    matchProjects, hubDisciplineFor, buildConsultantRows, projectFacts, subjectOf, tidyReturnAddress,
+    matchProjects, registerCodeOf, hubDisciplineFor, disciplineMatchRows, buildConsultantRows, paletteFor, projectFacts, subjectOf, tidyReturnAddress,
     nextEntry, hasConsultants, createRegisterClient,
     isConsultant, consultantFirms, nameIn, tagLabel, canEditRegister, editablePerson, disciplineChoices,
-    firmChoices, firmConsultantCount, filterConsultants, filterFirms,
+    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts,
     blank, newContactBody, newFirmBody, withEdit, writeErrorOf,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;

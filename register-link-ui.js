@@ -26,6 +26,24 @@
     '.rl-pick{font:inherit;font-size:13px;text-align:start;padding:7px 10px;border:0;border-bottom:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;display:flex;gap:8px;align-items:baseline}',
     '.rl-pick:hover{background:var(--surface-2)}',
     '.rl-muted{color:var(--text-3);font-size:12px;padding:6px 10px}',
+    '.rl-add-pop{position:fixed;z-index:1000;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.28);overflow:hidden;font-weight:400}',
+    '.rl-add-search{margin:8px;width:auto!important;box-sizing:border-box}',
+    '.rl-add-list{flex:1;min-height:0;overflow:auto;border-top:1px solid var(--border)}',
+    '.rl-add-item{width:100%;flex-direction:column;align-items:flex-start;gap:2px;font-size:12px}',
+    '.rl-add-item:disabled{cursor:default;opacity:.7}',
+    '.rl-add-firm{font-size:11px;color:var(--text-3)}',
+    '.rl-add-error{margin:0 8px 8px;font-size:12px;color:var(--red,#dc2626)}',
+    '.rl-dm{flex:none;margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:12px}',
+    '.rl-dm-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 10px;font-weight:700;font-size:12px;color:var(--text)}',
+    '.rl-dm-note{font-weight:400;font-size:11px;color:var(--text-3)}',
+    '.rl-dm-tr{display:grid;grid-template-columns:76px minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center;padding:5px 10px;border-top:1px solid var(--border);text-align:start}',
+    '.rl-dm-th{font-size:11px;font-weight:600;color:var(--text-3);background:var(--surface-2)}',
+    '.rl-dm-sub{padding:8px 10px 4px;border-top:1px solid var(--border);font-size:11px;font-weight:600;color:var(--text-3)}',
+    '.rl-dm-code{display:inline-flex;align-items:center;gap:6px;font-weight:600;color:var(--text)}',
+    '.rl-dm-dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--text-3)}',
+    '.rl-dm-none{color:var(--text-3)}',
+    '.rl-dm-sel{font:inherit;font-size:12px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);width:100%;min-width:0}',
+    '.rl-dm .rl-line{padding:6px 10px}',
     '.rl-subject{font-family:ui-monospace,Consolas,monospace;font-size:11px;user-select:all;color:var(--text)}',
   ].join('\n');
   document.head.appendChild(css);
@@ -275,6 +293,97 @@
     return h('a', { className: 'ov-sec-add-btn', href: projectLink(data.registerProjectId), target: '_blank', rel: 'noopener' }, 'עריכה ב-KK Hub');
   }
 
+  // After a write to a project: a read already on its way may predate it, so wait for it and read again.
+  function reloadProject(id) {
+    const pending = inflight['project:' + id];
+    return pending ? pending.then(() => loadProject(id), () => loadProject(id)) : loadProject(id);
+  }
+
+  /* The consultants header's "Add": every contact in the register not yet on the project, the
+     search on the first line, and a pick puts that person on the project in the register. For
+     the register's editors only (it refuses anyone else). The list is fixed to the window, since
+     the section clips what overflows it. */
+  function AddContact({ data }) {
+    const s = useLinked(data);
+    const id = data && data.registerProjectId;
+    const [open, setOpen] = useState(null);
+    const [q, setQ] = useState('');
+    const [busy, setBusy] = useState(null);
+    const [error, setError] = useState(null);
+    const wrap = useRef(null);
+    const ready = s.config === 'on' && s.signedIn && !!id;
+    const haveMe = !!s.me;
+    useEffect(() => { if (ready && !haveMe) loadMe(); }, [ready, haveMe]);
+    useEffect(() => {
+      if (!open) return undefined;
+      const away = e => { if (wrap.current && !wrap.current.contains(e.target)) setOpen(null); };
+      const esc = e => { if (e.key === 'Escape') setOpen(null); };
+      const shut = () => setOpen(null);
+      // The list is fixed to the window, so scrolling the page under it closes it; its own list scrolls.
+      const scrolled = e => { if (!(wrap.current && e.target instanceof Node && wrap.current.contains(e.target))) setOpen(null); };
+      document.addEventListener('mousedown', away);
+      document.addEventListener('keydown', esc);
+      window.addEventListener('resize', shut);
+      window.addEventListener('scroll', scrolled, true);
+      return () => {
+        document.removeEventListener('mousedown', away);
+        document.removeEventListener('keydown', esc);
+        window.removeEventListener('resize', shut);
+        window.removeEventListener('scroll', scrolled, true);
+      };
+    }, [open]);
+    const p = id ? s.projects[id] : null;
+    const d = s.directory;
+    const list = useMemo(() => (open && p && p.state === 'ok' && d && d.state === 'ok'
+      ? RL.addableContacts(d.data.persons, d.data.firms, p.data.members, q) : []), [open, p, d, q]);
+    if (!ready || !(s.me && s.me.state === 'ok' && RL.canEditRegister(s.me.data.role))) return null;
+
+    const toggle = e => {
+      if (open) { setOpen(null); return; }
+      const r = e.currentTarget.getBoundingClientRect();
+      const width = Math.min(340, window.innerWidth - 16);
+      const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+      const left = Math.max(8, Math.min(rtl ? r.right - width : r.left, window.innerWidth - width - 8));
+      const top = r.bottom + 4;
+      setQ(''); setError(null);
+      setOpen({ left, top, width, maxHeight: Math.max(160, Math.min(380, window.innerHeight - top - 8)) });
+    };
+    const pick = person => {
+      if (busy) return;
+      setBusy(person.id); setError(null);
+      client.send('PUT', '/api/projects/' + encodeURIComponent(id) + '/members/' + encodeURIComponent(person.id), null)
+        .then(r => {
+          setBusy(null);
+          if (r.state === 'signed-out') recheck();
+          if (r.state === 'ok') { setOpen(null); reloadProject(id); return; }
+          setError(RL.writeErrorOf(r).text);
+        }, () => { setBusy(null); setError(RL.writeErrorOf({ state: 'unreachable' }).text); });
+    };
+    const directoryReady = d && d.state === 'ok' && p && p.state === 'ok';
+    const readFailed = [p, d].some(e => e && e.state !== 'ok');
+    return h('span', { ref: wrap, style: { display: 'inline-flex' } },
+      h('button', { type: 'button', className: 'ov-sec-add-btn', style: open ? { opacity: 1 } : null, onClick: toggle, 'aria-expanded': !!open }, 'הוספה'),
+      open ? h('div', {
+        className: 'rl-add-pop', role: 'dialog',
+        style: { left: open.left, top: open.top, width: open.width, maxHeight: open.maxHeight },
+      },
+      h('input', {
+        className: 'ov-edit-input rl-add-search', autoFocus: true, value: q, type: 'search',
+        placeholder: 'חיפוש לפי שם או משרד', onChange: e => setQ(e.target.value),
+      }),
+      error ? h('div', { className: 'rl-add-error' }, error) : null,
+      h('div', { className: 'rl-add-list' },
+        readFailed ? h('div', { className: 'rl-line rl-muted' }, 'המאגר לא עונה', button('נסה שוב', () => retry(id))) : null,
+        !directoryReady && !readFailed ? h('div', { className: 'rl-muted' }, 'טוען…') : null,
+        directoryReady && !list.length ? h('div', { className: 'rl-muted' }, 'אין אנשי קשר תואמים') : null,
+        list.map(c => h('button', {
+          key: c.id, type: 'button', className: 'rl-pick rl-add-item', disabled: !!busy, onClick: () => pick(c),
+        },
+        h('span', { className: 'rl-add-name', 'data-i18n-skip': '' }, c.name),
+        c.firm ? h('span', { className: 'rl-add-firm', 'data-i18n-skip': '' }, c.firm) : null,
+        busy === c.id ? h('span', { className: 'rl-muted' }, 'מוסיף…') : null)))) : null);
+  }
+
   /* Spec §2: a never-linked project whose code names exactly one register project is linked to
      it — once per code per page load, and never for someone who may not edit. */
   const tried = new Set();
@@ -314,6 +423,60 @@
     });
   }
 
+  /* Settings → Fields → Discipline: each hub code beside the register discipline it stands for,
+     in Hebrew and in English, then the register disciplines no code claims. With canEdit the
+     Hebrew cell is a picker; onPick(id, code) is the caller's ('' = no match); note overrides
+     the line beside the title. A register
+     discipline already claimed by another code can't be picked twice. */
+  function DisciplineMatch({ list, canEdit, onPick, note }) {
+    const s = useDirectory();
+    const status = directoryStatus(s);
+    const head = h('div', { className: 'rl-dm-head' }, 'התאמה ל-KKarcDB',
+      h('span', { className: 'rl-dm-note' }, note || (canEdit ? 'ההתאמה משותפת לכל המשרד' : 'רק מנהל המשרד משנה את ההתאמה')));
+    if (status.kind !== 'ok') return h('div', { className: 'rl-dm' }, head, h(DirectoryNotice, { status }));
+    const { rows, unmatched } = RL.disciplineMatchRows(list, status.data.tags);
+    const claimedBy = new Map();
+    rows.forEach(r => { if (r.registerCode && !r.duplicate) claimedBy.set(r.registerCode, r.label); });
+    const all = RL.disciplineChoices(status.data.tags, null, 'he');
+    const byCode = new Map((status.data.tags || []).filter(t => t.typeCode === 'discipline').map(t => [t.code, t]));
+    const he = t => (t && (t.nameHe || t.nameEn)) || '';
+    const en = t => (t && (t.nameEn || '')) || '';
+    const skip = { 'data-i18n-skip': '' };
+    // <bdi> isolates the name's own direction while the cell stays aligned with the page.
+    const cell = (text, extra) => h('span', Object.assign({ role: 'cell' }, skip, extra), h('bdi', null, text));
+    const none = h('span', { role: 'cell', className: 'rl-dm-none' }, '—');
+    const codeCell = r => h('span', { role: 'cell' }, h('span', Object.assign({ className: 'rl-dm-code' }, skip),
+      h('span', { className: 'rl-dm-dot', style: r.color ? { background: r.color } : null }), r.label));
+    const picker = r => h('span', { role: 'cell' }, h('select', {
+      className: 'rl-dm-sel',
+      value: r.registerCode && !r.duplicate ? r.registerCode : '',
+      'aria-label': 'תחום ב-KKarcDB',
+      onChange: e => onPick && onPick(r.id, e.target.value),
+    }, h('option', { value: '' }, 'ללא התאמה'),
+      all.map(c => {
+        const owner = claimedBy.get(c.code);
+        const taken = !!owner && c.code !== r.registerCode;
+        return h('option', Object.assign({ key: c.code, value: c.code, disabled: taken }, skip),
+          he(byCode.get(c.code)) + (taken ? ' · ' + owner : ''));
+      }),
+      r.registerCode && !r.tag && !r.duplicate ? h('option', Object.assign({ value: r.registerCode }, skip), r.registerCode) : null));
+    const hebrew = r => r.tag ? cell(he(r.tag)) : r.registerCode ? cell(r.registerCode, { className: 'rl-dm-none' }) : none;
+    const tr = (key, cells) => h('div', { key, className: 'rl-dm-tr', role: 'row' }, ...cells);
+    return h('div', { className: 'rl-dm' }, head,
+      h('div', { role: 'table', 'aria-label': 'התאמה ל-KKarcDB' },
+        h('div', { className: 'rl-dm-tr rl-dm-th', role: 'row' },
+          h('span', { role: 'columnheader' }, 'קוד'),
+          h('span', { role: 'columnheader' }, 'שם בעברית'),
+          h('span', { role: 'columnheader' }, 'שם באנגלית')),
+        rows.map(r => tr(r.id, [
+          codeCell(r),
+          canEdit ? picker(r) : r.duplicate ? none : hebrew(r),
+          r.tag && !r.duplicate ? cell(en(r.tag)) : none,
+        ])),
+        unmatched.length ? h('div', { className: 'rl-dm-sub', role: 'row' }, h('span', { role: 'cell' }, 'ללא קוד')) : null,
+        unmatched.map(t => tr('u:' + t.code, [none, cell(he(t)), en(t) ? cell(en(t)) : none]))));
+  }
+
   // The project notice, for the directory's states (loading, off, signed-out, refused, unreachable).
   function DirectoryNotice({ status }) {
     return h(Notice, { data: {}, save: () => {}, hubCode: '', status });
@@ -326,7 +489,7 @@
   const retryMe = () => { if (snap.me && snap.me.state !== 'ok') set({ me: null }); };
 
   window.RegisterLinkUI = {
-    useConsultantRows, FactsCard, ConsultantsNotice, EditInHub, AutoLink,
+    useConsultantRows, FactsCard, ConsultantsNotice, EditInHub, AddContact, AutoLink, DisciplineMatch,
     useDirectory, directoryStatus, DirectoryNotice, write, hubLink, retryMe,
   };
   boot();

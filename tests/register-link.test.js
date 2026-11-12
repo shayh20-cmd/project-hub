@@ -21,6 +21,52 @@ test('hubDisciplineFor maps only to a discipline the project still lists', () =>
   assert.strictEqual(RL.hubDisciplineFor('cyber', list), null, 'no hub counterpart');
 });
 
+test('registerCodeOf: the office match on the option first, the built-in map otherwise', () => {
+  assert.strictEqual(RL.registerCodeOf({ id: 'ARCH' }), 'architecture', 'no registerCode: the map');
+  assert.strictEqual(RL.registerCodeOf({ id: 'ACSS', registerCode: 'acoustics' }), 'acoustics', 'set by the office');
+  assert.strictEqual(RL.registerCodeOf({ id: 'ARCH', registerCode: '' }), null, "'' means no match");
+  assert.strictEqual(RL.registerCodeOf({ id: 'NEW1' }), null, 'a code the map does not know');
+  assert.strictEqual(RL.registerCodeOf(null), null);
+});
+
+test('hubDisciplineFor follows a match the office set on the option', () => {
+  const list = [{ id: 'ACSS', registerCode: 'acoustics' }, { id: 'ARCH', registerCode: '' }, { id: 'SURV', registerCode: 'surveying' }];
+  assert.strictEqual(RL.hubDisciplineFor('acoustics', list), 'ACSS');
+  assert.strictEqual(RL.hubDisciplineFor('surveying', list), 'SURV', 'a new hub code');
+  assert.strictEqual(RL.hubDisciplineFor('accessibility', list), null, 'ACSS now stands for acoustics');
+  assert.strictEqual(RL.hubDisciplineFor('architecture', list), null, 'ARCH was unmatched on purpose');
+  assert.strictEqual(RL.hubDisciplineFor(null, list), null);
+  assert.strictEqual(RL.hubDisciplineFor('fire', [{ id: 'X', registerCode: 'fire' }, { id: 'FIRE' }]), 'X', 'the first option to name it wins');
+});
+
+test('disciplineMatchRows: each option beside its register discipline, then the unclaimed ones', () => {
+  const regTags = [
+    { typeCode: 'discipline', code: 'fire', nameHe: 'כיבוי אש', nameEn: 'Fire', sortOrder: 30 },
+    { typeCode: 'discipline', code: 'architecture', nameHe: 'אדריכלות', nameEn: 'Architecture', sortOrder: 10 },
+    { typeCode: 'discipline', code: 'acoustics', nameHe: 'אקוסטיקה', nameEn: 'Acoustics', sortOrder: 50 },
+    { typeCode: 'discipline', code: 'surveying', nameHe: 'מדידות', sortOrder: 40 },
+    { typeCode: 'kind', code: 'consultant', nameHe: 'יועץ' },
+  ];
+  const list = [
+    { id: 'ARCH', label: 'ARCH', color: 'var(--disc-ARCH)' },
+    { id: 'FIRE', label: 'FIRE' },
+    { id: 'X', label: 'X', registerCode: 'fire' },
+    { id: 'NEW1', label: 'NEW1' },
+    { id: 'GONE', label: 'GONE', registerCode: 'deleted_in_register' },
+  ];
+  const { rows, unmatched } = RL.disciplineMatchRows(list, regTags);
+  assert.deepStrictEqual(rows.map(r => [r.id, r.registerCode, r.tag && r.tag.nameEn, r.duplicate]), [
+    ['ARCH', 'architecture', 'Architecture', false],
+    ['FIRE', 'fire', 'Fire', false],
+    ['X', 'fire', 'Fire', true],
+    ['NEW1', null, null, false],
+    ['GONE', 'deleted_in_register', null, false],
+  ]);
+  assert.strictEqual(rows[0].color, 'var(--disc-ARCH)');
+  assert.deepStrictEqual(unmatched.map(t => t.code), ['surveying', 'acoustics'], "register order, kinds left out");
+  assert.deepStrictEqual(RL.disciplineMatchRows(undefined, undefined), { rows: [], unmatched: [] });
+});
+
 test('matchProjects: by initials or code, ignoring case and spaces', () => {
   const ps = [
     { id: 'a', code: '2017-03', initials: 'BEER' },
@@ -40,7 +86,7 @@ const tags = [
   { typeCode: 'discipline', code: 'structural', nameEn: 'Structural', nameHe: 'קונסטרוקציה', sortOrder: 20 },
   { typeCode: 'discipline', code: 'electrical', nameEn: 'Electrical', nameHe: 'חשמל', sortOrder: 30 },
   { typeCode: 'discipline', code: 'fire', nameEn: 'Fire safety', nameHe: 'כבאות', sortOrder: 80 },
-  { typeCode: 'discipline', code: 'cyber', nameEn: 'Cyber security', nameHe: 'סייבר', sortOrder: 330 },
+  { typeCode: 'discipline', code: 'cyber', nameEn: 'Cyber security', nameHe: 'סייבר', color: 'pink', sortOrder: 330 },
   { typeCode: 'kind', code: 'consultant', nameEn: 'Consultant', nameHe: 'יועץ', sortOrder: 10 },
 ];
 const firms = [
@@ -73,7 +119,7 @@ test('buildConsultantRows: one row per firm and discipline, in the hub\'s order'
 
   const [strc, elec, fire, cyber, client, ghost] = rows;
   assert.deepStrictEqual(strc, {
-    id: 'f:f1|structural', discCode: 'STRC', discipline: 'קונסטרוקציה', firm: 'קונס בע״מ', firmId: 'f1', registerDiscipline: 'structural',
+    id: 'f:f1|structural', discCode: 'STRC', discipline: 'קונסטרוקציה', color: null, firm: 'קונס בע״מ', firmId: 'f1', registerDiscipline: 'structural',
     contacts: [
       { personId: 'p1', name: 'אבי', mobile: '050', phone: '03', email: 'avi@x' },
       { personId: 'p2', name: 'Beni', mobile: '', phone: '', email: 'b@x' },
@@ -82,7 +128,8 @@ test('buildConsultantRows: one row per firm and discipline, in the hub\'s order'
   assert.strictEqual(elec.discCode, 'ELEC');
   assert.deepStrictEqual(elec.contacts.map(c => c.personId), ['p1', 'p2'], 'a two-discipline firm lists its people in both rows');
   assert.deepStrictEqual([fire.discCode, fire.firm, fire.firmId], ['FIRE', '', null], 'no firm: the person\'s own discipline');
-  assert.deepStrictEqual([cyber.discCode, cyber.discipline, cyber.firm], [null, 'סייבר', 'Cyber Co'], 'unmapped: shown, no tender link');
+  assert.deepStrictEqual([cyber.discCode, cyber.discipline, cyber.color, cyber.firm], [null, 'סייבר', 'pink', 'Cyber Co'], 'unmapped: shown with the register colour, no tender link');
+  assert.strictEqual(client.color, null, 'no discipline, no colour');
   assert.deepStrictEqual([client.discCode, client.discipline, client.firm], [null, RL.NO_DISCIPLINE, 'הלקוח']);
   assert.deepStrictEqual([ghost.firm, ghost.contacts[0]], ['משרד ישן', { personId: 'p7', name: 'Ghost', mobile: '', phone: '', email: '' }],
     'a member missing from /api/persons still appears');
@@ -514,4 +561,39 @@ test('writeErrorOf: a formatter puts the other person\'s value in words, and the
   assert.deepStrictEqual(RL.writeErrorOf({ state: 'changed', current: [] }, labels).vars, { value: '—' }, 'all cleared meanwhile');
   assert.strictEqual(RL.writeErrorOf({ state: 'unreachable' }, null, 'Avi').who, 'Avi', 'every failure names the record');
   assert.strictEqual(RL.writeErrorOf({ state: 'unreachable' }).who, null);
+});
+
+test('addableContacts: contacts not on the project and not office staff, Hebrew names first, searched in both languages', () => {
+  const firms = [{ id: 'f1', name: 'UV Engineering', nameHe: 'יו.וי הנדסה' }, { id: 'f2', name: 'Datamap' }];
+  const persons = [
+    { id: 'a', name: 'Tamir Valent', nameHe: 'תמיר ולנט', firmId: 'f1', email: 'tamir@uv-eng.com', tags: { kind: ['consultant'] } },
+    { id: 'b', name: 'Ilan Bar', firmId: 'f2', tags: { kind: ['consultant'] } },
+    { id: 'c', name: 'Uri Golomb', nameHe: 'אורי גולומב', firmId: 'f1', tags: {} },
+    { id: 'staff', name: 'Arie Hayun', nameHe: 'אריה חיון', tags: { kind: ['internal'] } },
+    { id: 'user', name: 'Login Only', isContact: false },
+    { id: 'blank', name: '  ', nameHe: '' },
+    { id: 'loose', nameHe: 'רון קליק', firmName: 'יוזמות', tags: {} },
+  ];
+  const members = [{ personId: 'c' }];
+  const all = RL.addableContacts(persons, firms, members, '');
+  assert.deepStrictEqual(all.map(p => p.id), ['loose', 'a', 'b']);
+  assert.deepStrictEqual(all.find(p => p.id === 'a'), { id: 'a', name: 'תמיר ולנט', firm: 'יו.וי הנדסה' });
+  assert.deepStrictEqual(all.find(p => p.id === 'b'), { id: 'b', name: 'Ilan Bar', firm: 'Datamap' });
+  assert.deepStrictEqual(all.find(p => p.id === 'loose'), { id: 'loose', name: 'רון קליק', firm: 'יוזמות' });
+  const ids = q => RL.addableContacts(persons, firms, members, q).map(p => p.id);
+  assert.deepStrictEqual(ids('tamir'), ['a']);
+  assert.deepStrictEqual(ids('ולנט'), ['a']);
+  assert.deepStrictEqual(ids('uv engineering'), ['a']);
+  assert.deepStrictEqual(ids('הנדסה'), ['a']);
+  assert.deepStrictEqual(ids('UV-ENG'), ['a']);
+  assert.deepStrictEqual(ids('גולומב'), []);
+  assert.deepStrictEqual(ids('חיון'), []);
+  assert.deepStrictEqual(RL.addableContacts(null, null, null, 'x'), []);
+});
+
+test('paletteFor: each register tag colour borrows the hub discipline of that hue, grey otherwise', () => {
+  const want = { gray: 'LIFT', brown: 'GR', orange: 'LAND', yellow: 'ELEC', green: 'SAFE', teal: 'PLUM', blue: 'ARCH', purple: 'TRAF', pink: 'ACSS', red: 'FIRE' };
+  Object.keys(want).forEach(c => assert.strictEqual(RL.paletteFor(c), want[c], c));
+  assert.strictEqual(RL.paletteFor(null), 'LIFT');
+  assert.strictEqual(RL.paletteFor('chartreuse'), 'LIFT');
 });

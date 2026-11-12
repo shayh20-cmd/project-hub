@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<title>register-match harness</title>
+<!-- Browser checks for the Discipline ↔ KKarcDB match table (RegisterLinkUI.DisciplineMatch in
+     register-link-ui.js), run against a stand-in register: fetch and supabase-js are replaced
+     before the module loads, so nothing reaches the register. Open it through the local server:
+     http://localhost:3000/tests/register-match-harness.html — the title reads "PASS n/n" or
+     "FAIL …", and the list below says which check failed. -->
+<style>
+:root{--bg:#F5F6F8;--surface:#fff;--surface-2:#FAFBFC;--border:#E8EAED;--text:#1E1F21;--text-2:#6D6E6F;--text-3:#6B7280;--accent:#2563EB}
+body{font-family:system-ui,sans-serif;background:var(--bg);margin:0;padding:16px}
+.box{background:var(--surface);max-width:520px;margin-bottom:12px}
+#out{font:12px ui-monospace,monospace;padding:12px 0;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="box" id="edit"></div>
+<div class="box" id="view"></div>
+<pre id="out">running…</pre>
+<script src="/react-18.3.1.min.js"></script>
+<script src="/react-dom-18.3.1.min.js"></script>
+<script src="/register-link.js"></script>
+<script>
+window.H = (function () {
+  const H = {};
+  const json = (body, status) => Promise.resolve(new Response(JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
+  H.tags = [
+    { typeCode: 'discipline', code: 'architecture', nameHe: 'אדריכלות', nameEn: 'Architecture', sortOrder: 10 },
+    { typeCode: 'discipline', code: 'fire', nameHe: 'כיבוי אש', nameEn: 'Fire', sortOrder: 20 },
+    { typeCode: 'discipline', code: 'surveying', nameHe: 'מדידות', sortOrder: 30 },
+    { typeCode: 'discipline', code: 'acoustics', nameHe: 'אקוסטיקה', nameEn: 'Acoustics', sortOrder: 40 },
+    { typeCode: 'kind', code: 'consultant', nameHe: 'יועץ' },
+  ];
+  window.fetch = url => {
+    const u = String(url).replace('https://reg.example', '');
+    if (u === '/api/register-config') return json({ supabaseUrl: 'https://sb.example', supabaseAnonKey: 'k', api: 'https://reg.example', hubUrl: null });
+    if (u === '/api/me') return json({ role: 'editor' });
+    if (u === '/api/persons' || u === '/api/firms') return json([]);
+    if (u === '/api/tags') return json(H.tags);
+    return json({ error: 'unexpected ' + u }, 500);
+  };
+  window.supabase = {
+    createClient: () => ({
+      auth: {
+        getSession: () => Promise.resolve({ data: { session: { access_token: 'x.e30.y' } } }),
+        refreshSession: () => Promise.resolve({ data: { session: null } }),
+        onAuthStateChange: () => {},
+      },
+    }),
+  };
+  return H;
+})();
+</script>
+<script src="/register-link-ui.js"></script>
+<script>
+(async function () {
+  const UI = window.RegisterLinkUI;
+  const tick = (ms = 40) => new Promise(r => setTimeout(r, ms));
+  const until = async (fn, ms = 2000) => { for (let t = 0; t < ms; t += 20) { const v = fn(); if (v) return v; await tick(20); } return fn(); };
+  const results = [];
+  const check = (name, ok, detail) => results.push({ name, ok: !!ok, detail });
+  const rowsOf = el => [...el.querySelectorAll('.rl-dm-tr:not(.rl-dm-th)')].map(r => [...r.children].map(c => {
+    const sel = c.querySelector('select');
+    return sel ? 'select:' + sel.value : c.textContent;
+  }));
+
+  const list = [
+    { id: 'ARCH', label: 'ARCH', color: '#3B82F6' },
+    { id: 'FIRE', label: 'FIRE' },
+    { id: 'NEW1', label: 'NEW1' },
+  ];
+  const picks = [];
+  const edit = document.getElementById('edit');
+  const view = document.getElementById('view');
+  ReactDOM.createRoot(edit).render(React.createElement(UI.DisciplineMatch, { list, canEdit: true, onPick: (id, code) => picks.push([id, code]) }));
+  ReactDOM.createRoot(view).render(React.createElement(UI.DisciplineMatch, { list, canEdit: false }));
+
+  await until(() => edit.querySelector('select') && view.querySelectorAll('.rl-dm-tr').length > 3);
+  const v = rowsOf(view);
+  check('each code sits beside its register discipline, in Hebrew and in English',
+    JSON.stringify(v.slice(0, 2)) === JSON.stringify([['ARCH', 'אדריכלות', 'Architecture'], ['FIRE', 'כיבוי אש', 'Fire']]), JSON.stringify(v));
+  check('a code with no match says so', JSON.stringify(v[2]) === JSON.stringify(['NEW1', '—', '—']), JSON.stringify(v[2]));
+  check('register disciplines no code claims are listed, in register order, kinds left out',
+    JSON.stringify(v.slice(3)) === JSON.stringify([['—', 'מדידות', '—'], ['—', 'אקוסטיקה', 'Acoustics']]), JSON.stringify(v.slice(3)));
+  check('the unclaimed ones are headed', /ללא קוד/.test(view.textContent));
+  check('a reader gets no picker', !view.querySelector('select'));
+  check('register names are not translated by the page',
+    [...view.querySelectorAll('.rl-dm-tr:not(.rl-dm-th) [role=cell]')].filter(c => c.textContent !== '—').every(c => c.closest('[data-i18n-skip]') || c.firstElementChild && c.firstElementChild.hasAttribute('data-i18n-skip')));
+
+  const sels = [...edit.querySelectorAll('select')];
+  check('an editor gets a picker per code, set to its match', sels.map(s => s.value).join() === 'architecture,fire,', sels.map(s => s.value).join());
+  const newOpts = [...sels[2].options];
+  check('the picker offers no match and every register discipline',
+    newOpts.map(o => o.value).join() === ',architecture,fire,surveying,acoustics', newOpts.map(o => o.value).join());
+  check('a discipline another code holds cannot be picked twice',
+    newOpts.find(o => o.value === 'fire').disabled && !newOpts.find(o => o.value === 'acoustics').disabled
+      && ![...sels[1].options].find(o => o.value === 'fire').disabled,
+    newOpts.map(o => o.value + ':' + o.disabled).join());
+  check('the taken one names its holder', / · FIRE$/.test(newOpts.find(o => o.value === 'fire').textContent), newOpts.find(o => o.value === 'fire').textContent);
+
+  sels[2].value = 'acoustics';
+  sels[2].dispatchEvent(new Event('change', { bubbles: true }));
+  await tick();
+  check('picking calls onPick with the code and the register discipline', JSON.stringify(picks) === JSON.stringify([['NEW1', 'acoustics']]), JSON.stringify(picks));
+  sels[0].value = '';
+  sels[0].dispatchEvent(new Event('change', { bubbles: true }));
+  await tick();
+  check('no match is picked as an empty code', JSON.stringify(picks[1]) === JSON.stringify(['ARCH', '']), JSON.stringify(picks));
+
+  const failed = results.filter(r => !r.ok);
+  document.title = failed.length ? 'FAIL ' + failed.map(r => r.name).join('; ') : 'PASS ' + results.length + '/' + results.length;
+  document.getElementById('out').textContent = results.map(r => (r.ok ? 'ok   ' : 'FAIL ') + r.name + (r.ok || r.detail === undefined ? '' : '  — ' + r.detail)).join('\n');
+})();
+</script>
+</body>
+</html>
