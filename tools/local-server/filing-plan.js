@@ -256,9 +256,10 @@ function layoutFor(map, tree, types) {
       const date = kinds.includes('day') && !kinds.includes('year') ? 'day' : 'year-day';
       const named = typeAt === 0 ? type => L.fill(levels[0].pattern, { type }) : null;
       sent = { base: sentBase, byType: typeAt >= 0, typeDirs: typeAt === 0 ? typeDirsUnder(list, at, types, named) : {}, typeAt: typeAt > 0 ? 'day' : 'top', date };
-    } else if (s.sent && s.sentSplit === false) sent = { base: sentBase, byType: false, typeDirs: {}, typeAt: 'top', date: 'year-day' };
-    else sent = { base: sentBase, byType: true, typeDirs: {}, typeAt: 'day', date: 'year-day' };
+    } else sent = { base: sentBase, byType: false, typeDirs: {}, typeAt: 'top', date: 'year-day' };
   }
+  // SENT is never split by type: the folder picked is where the day folders go (a saved or detected split is dropped)
+  if (L.isV2(sent) && (sent.byType || sent.typeAt === 'day')) sent = { ...sent, byType: false, typeDirs: {}, typeAt: 'top' };
   let updated = savedUpd;
   if (!savedUpd.base) {
     const upd = s.updated || autoOf().updated;
@@ -325,17 +326,20 @@ const typeInDay = t => !!t.byType && t.typeAt === 'day' && t.date !== 'none';
 function sentStart(list, t, type, types, code) {
   const dir = typeDirOf(list, t, type, types);
   const mode = L.DATES.includes(t.date) ? t.date : 'year-day';
-  if (!t.byType || typeInDay(t) || mode !== 'year-day') return { dir, year: null };
   const names = types.map(x => x.name);
   const base = inTree(list, t.base) || t.base;
-  const split = p => {
+  const asYear = p => {
     const parent = p.slice(0, Math.max(0, p.lastIndexOf('/')));
-    if (!base || !lc(parent).startsWith(lc(base) + '/')) return null;
     const leaf = leafOf(p);
     const head = code && lc(leaf).startsWith(lc(code) + '-') ? leaf.slice(0, code.length + 1) : '';
-    const r = L.readName(leaf.slice(head.length), names);
+    const r = parent && L.readName(leaf.slice(head.length), names);
     return r && r.kind === 'year' ? { dir: parent, year: { kind: 'year', pattern: head + r.pattern } } : null;
   };
+  // SENT together, its base picked as a year folder (LsSp-pub-sent-2026): the base is that year's, another year goes
+  // next to it
+  if (!t.byType && mode === 'year-day') return (base && asYear(base)) || { dir, year: null };
+  if (!t.byType || typeInDay(t) || mode !== 'year-day') return { dir, year: null };
+  const split = p => (base && lc(p).startsWith(lc(base) + '/') && p.lastIndexOf('/') > base.length ? asYear(p) : null);
   const dirs = pickedIn(list, t);
   if (!dirs[type]) for (const o of types) {
     if (o.name === type || !dirs[o.name]) continue;
@@ -361,7 +365,7 @@ function dateLevels(list, t, types, code) {
   if (mode === 'none') return [];
   const inDay = typeInDay(t);
   let year = null, day = null, type = null;
-  const starts = t.byType && !inDay ? types.map(x => sentStart(list, t, x.name, types, code)) : [];
+  const starts = inDay ? [] : t.byType ? types.map(x => sentStart(list, t, x.name, types, code)) : [sentStart(list, t, '', types, code)];
   const dirs = t.byType && !inDay ? starts.map(x => x.dir).filter(p => inTree(list, p)) : [inTree(list, t.base)].filter(Boolean);
   for (const dir of dirs) {
     const together = !t.byType || inDay;

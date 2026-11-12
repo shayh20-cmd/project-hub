@@ -135,21 +135,23 @@ test('filing-layout: detectLayout — the last year in a name; a trailing slash;
 test('filing-layout: cleanPublish — the v2 shape per target: byType, typeDirs, a date choice for SENT', () => {
   const S = 'P/S', U = 'P/U';
   const raw = {
-    sent: { base: S, byType: true, typeDirs: { PDF: S + '/X-sent-PDF', DWG: S + '/X-sent-DWG' }, typeAt: 'top', date: 'day' },
-    updated: { base: U, byType: false, typeDirs: {} },
+    sent: { base: S, byType: false, typeDirs: {}, typeAt: 'top', date: 'day' },
+    updated: { base: U, byType: true, typeDirs: { PDF: U + '/X-updated-PDF' } },
     types: null
   };
   assert.deepStrictEqual(L.cleanPublish(raw, rel), { publish: raw });
+  // SENT is never split by type: a split one comes out together; UPDATED keeps its type folders
+  const split = { ...raw, sent: { base: S, byType: true, typeDirs: { PDF: S + '/X-sent-PDF' }, typeAt: 'day', date: 'day' } };
+  assert.deepStrictEqual(L.cleanPublish(split, rel), { publish: raw });
   // bad typeDirs entries dropped: a path leaving the project, an empty one, a name that is no folder name or too long
-  const bad = { ...raw, sent: { ...raw.sent, typeDirs: { PDF: '../x', DWG: '', 'A/B': S + '/a', ['T'.repeat(21)]: S + '/b', DWF: S + '/c', OK: 5 } } };
-  assert.deepStrictEqual(L.cleanPublish(bad, rel).publish.sent.typeDirs, { DWF: S + '/c' });
+  const bad = { ...raw, updated: { ...raw.updated, typeDirs: { PDF: '../x', DWG: '', 'A/B': U + '/a', ['T'.repeat(21)]: U + '/b', DWF: U + '/c', OK: 5 } } };
+  assert.deepStrictEqual(L.cleanPublish(bad, rel).publish.updated.typeDirs, { DWF: U + '/c' });
   // a bad or missing date falls back to year then day; UPDATED has no date; byType a boolean
   assert.strictEqual(L.cleanPublish({ ...raw, sent: { ...raw.sent, date: 'month' } }, rel).publish.sent.date, 'year-day');
   assert.strictEqual(L.cleanPublish({ ...raw, sent: { base: S, byType: true } }, rel).publish.sent.date, 'year-day');
   assert.deepStrictEqual(L.cleanPublish({ ...raw, sent: { base: S, byType: false, date: 'none' } }, rel).publish.sent, { base: S, byType: false, typeDirs: {}, typeAt: 'top', date: 'none' });
-  // the type folder inside the day folder (the convention): typeAt 'day'; anything else is 'top'
-  assert.strictEqual(L.cleanPublish({ ...raw, sent: { ...raw.sent, typeAt: 'day' } }, rel).publish.sent.typeAt, 'day');
-  assert.strictEqual(L.cleanPublish({ ...raw, sent: { ...raw.sent, typeAt: 'month' } }, rel).publish.sent.typeAt, 'top');
+  // SENT's typeAt is always 'top' (no type folders in SENT)
+  assert.strictEqual(L.cleanPublish({ ...raw, sent: { ...raw.sent, typeAt: 'day' } }, rel).publish.sent.typeAt, 'top');
   assert.strictEqual('typeAt' in L.cleanPublish({ ...raw, updated: { ...raw.updated, typeAt: 'day' } }, rel).publish.updated, false, 'UPDATED has no typeAt');
   assert.deepStrictEqual(L.cleanPublish({ ...raw, updated: { base: U, byType: true, date: 'day', typeDirs: null } }, rel).publish.updated, { base: U, byType: true, typeDirs: {} });
   // v2 wins over levels sent with it; the old shape (levels, no byType) is cleaned as before, side by side with v2
@@ -163,4 +165,12 @@ test('filing-layout: renameType — a folder name with another type in place of 
   assert.strictEqual(L.renameType('pdf files', 'PDF', 'DWG'), 'DWG files');
   assert.strictEqual(L.renameType('PDFS', 'PDF', 'DWG'), null, 'not a whole word');
   assert.strictEqual(L.renameType('misc', 'PDF', 'DWG'), null);
+});
+
+test('filing-layout: readName — a day folder written day first (DD,MM,YYYY) is a day, not a year', () => {
+  assert.deepStrictEqual(L.readName('LsSp-pub-sent-01,07,2026- מסמכים ליועצת בטיחות', []), { kind: 'day', pattern: 'LsSp-pub-sent-{dd},{mm},{yyyy}' });
+  assert.deepStrictEqual(L.readName('LsSp-pub-sent-2026', []), { kind: 'year', pattern: 'LsSp-pub-sent-{yyyy}' });
+  assert.deepStrictEqual(L.readName('LDLI-pub-PDF-2026,10,19 - חניה', ['PDF']), { kind: 'day', pattern: 'LDLI-pub-{type}-{yyyy},{mm},{dd}' });
+  assert.strictEqual(L.readName('X-pub-sent-08,06,26- a', []), null, 'a two-digit year is not read');
+  assert.strictEqual(L.readName('X-45,13,2026', []).kind, 'year', 'no month 13: not a date');
 });

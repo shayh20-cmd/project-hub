@@ -17430,7 +17430,17 @@ const fmFill = (pattern, v) => ['code', 'type', 'yyyy', 'mm', 'dd'].reduce((s, k
    day levels, which v2 cannot say, loads as typeAt 'top' with date 'year-day': an approximation. UPDATED's date
    levels, which v2 has no place for, are dropped. */
 const FM_DATES = ['year-day', 'day', 'none'];
+// SENT is never split by type: the folder picked is where the date folders go (a split saved before is dropped)
 const fmTargetOf = (x, sent, ctx) => {
+  const t = fmTargetOf0(x, sent, ctx);
+  return sent ? {
+    ...t,
+    byType: false,
+    typeDirs: {},
+    typeAt: 'top'
+  } : t;
+};
+const fmTargetOf0 = (x, sent, ctx) => {
   const o = x && typeof x === 'object' ? x : {};
   const base = String(o.base || '');
   const out = {
@@ -17567,13 +17577,15 @@ const fmLastYear = text => {
   return -1;
 };
 const FM_DAY_RE = /([0-9]{4}),([0-9]{2}),([0-9]{2})/;
+// a date written day first (DD,MM,YYYY: LsSp-pub-sent-01,07,2026- desc): a real day and month, no digit around it
+const FM_DAY_DMY_RE = /(?<![0-9])(0[1-9]|[12][0-9]|3[01]),(0[1-9]|1[0-2]),((?:19|20)[0-9]{2})(?![0-9])/;
 const fmReadName = (leaf, names) => {
-  const d = FM_DAY_RE.exec(leaf);
+  const d = FM_DAY_RE.exec(leaf) || FM_DAY_DMY_RE.exec(leaf);
   if (d) {
     const head = leaf.slice(0, d.index);
     return {
       kind: 'day',
-      pattern: (fmWithTypeToken(head, names) || head) + '{yyyy},{mm},{dd}'
+      pattern: (fmWithTypeToken(head, names) || head) + (d[1].length === 4 ? '{yyyy},{mm},{dd}' : '{dd},{mm},{yyyy}')
     };
   }
   const typed = fmWithTypeToken(leaf, names);
@@ -17672,18 +17684,13 @@ const fmTypeInDay = t => !!t.byType && t.typeAt === 'day' && t.date !== 'none';
 const fmSentStart = (list, t, type, types, code) => {
   const dir = fmTypeDirOf(list, t, type, types);
   const mode = FM_DATES.includes(t.date) ? t.date : 'year-day';
-  if (!t.byType || fmTypeInDay(t) || mode !== 'year-day') return {
-    dir,
-    year: null
-  };
   const names = types.map(x => x.name);
   const base = fmInTree(list, t.base) || t.base;
-  const split = p => {
+  const asYear = p => {
     const parent = p.slice(0, Math.max(0, p.lastIndexOf('/')));
-    if (!base || !fmLc(parent).startsWith(fmLc(base) + '/')) return null;
     const leaf = fmLeaf(p);
     const head = code && fmLc(leaf).startsWith(fmLc(code) + '-') ? leaf.slice(0, code.length + 1) : '';
-    const r = fmReadName(leaf.slice(head.length), names);
+    const r = parent && fmReadName(leaf.slice(head.length), names);
     return r && r.kind === 'year' ? {
       dir: parent,
       year: {
@@ -17692,6 +17699,16 @@ const fmSentStart = (list, t, type, types, code) => {
       }
     } : null;
   };
+  // SENT together, its base picked as a year folder (LsSp-pub-sent-2026): the base is that year's, another year goes next to it
+  if (!t.byType && mode === 'year-day') return base && asYear(base) || {
+    dir,
+    year: null
+  };
+  if (!t.byType || fmTypeInDay(t) || mode !== 'year-day') return {
+    dir,
+    year: null
+  };
+  const split = p => base && fmLc(p).startsWith(fmLc(base) + '/') && p.lastIndexOf('/') > base.length ? asYear(p) : null;
   const dirs = fmPickedIn(list, t);
   if (!dirs[type]) for (const o of types) {
     if (o.name === type || !dirs[o.name]) continue;
@@ -17719,7 +17736,7 @@ const fmDateLevels = (list, t, types, code) => {
   let year = null,
     day = null,
     type = null;
-  const starts = t.byType && !inDay ? types.map(x => fmSentStart(list, t, x.name, types, code)) : [];
+  const starts = inDay ? [] : t.byType ? types.map(x => fmSentStart(list, t, x.name, types, code)) : [fmSentStart(list, t, '', types, code)];
   const dirs = t.byType && !inDay ? starts.map(x => x.dir).filter(p => fmInTree(list, p)) : [fmInTree(list, t.base)].filter(Boolean);
   for (const dir of dirs) {
     const together = !t.byType || inDay;
@@ -19419,7 +19436,7 @@ function PublishFoldersBox({
         ...o,
         base: ''
       }))
-    })), msg(key + ':base'), h("label", {
+    })), msg(key + ':base'), sent ? null : h("label", {
       className: "fm-check"
     }, h("input", {
       type: "checkbox",
