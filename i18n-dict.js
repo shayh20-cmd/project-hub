@@ -4098,6 +4098,13 @@ Object.assign(HE_EN, {
 "חיפוש לפי שם או משרד": "Search by name or office",
 "אין אנשי קשר תואמים": "No matching contacts",
 "מוסיף…": "Adding…",
+"התאמה ל-KKarcDB": "KKarcDB match",
+"ההתאמה משותפת לכל המשרד": "The match is shared by the whole office",
+"רק מנהל המשרד משנה את ההתאמה": "Only the office admin changes the match",
+"ההתאמה של הפרויקט הזה": "This project's match",
+"ללא התאמה": "No match",
+"ללא קוד": "No code",
+"תחום ב-KKarcDB": "KKarcDB discipline",
 });
 
 window.I18N_HE_EN = HE_EN;
