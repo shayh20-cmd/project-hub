@@ -591,6 +591,79 @@ test('addableContacts: contacts not on the project and not office staff, Hebrew 
   assert.deepStrictEqual(RL.addableContacts(null, null, null, 'x'), []);
 });
 
+test('addRowOptions: each list is narrowed by the picks in the other two and by its own search', () => {
+  const tags = [
+    { typeCode: 'discipline', code: 'architecture', nameHe: 'אדריכלות', nameEn: 'Architecture', color: 'blue', sortOrder: 10 },
+    { typeCode: 'discipline', code: 'structural', nameHe: 'קונסטרוקציה', nameEn: 'Structural', sortOrder: 20 },
+    { typeCode: 'discipline', code: 'acoustics', nameHe: 'אקוסטיקה', nameEn: 'Acoustics', sortOrder: 5 },
+    { typeCode: 'discipline', code: 'unused', nameHe: 'לא בשימוש', sortOrder: 1 },
+    { typeCode: 'kind', code: 'consultant', nameHe: 'יועץ' },
+  ];
+  const hub = [{ id: 'STRC' }, { id: 'ARCH' }];
+  const firms = [
+    { id: 'f1', name: 'Arc Studio', nameHe: 'סטודיו קשת', tags: { discipline: ['architecture'] } },
+    { id: 'f2', name: 'Beams', nameHe: 'קורות', tags: { discipline: ['structural', 'architecture'] } },
+    { id: 'f3', name: 'Quiet', tags: {} },
+  ];
+  const persons = [
+    { id: 'a', name: 'Avi', nameHe: 'אבי', firmId: 'f1', mobile: '050', email: 'avi@arc.co', tags: { discipline: ['acoustics'] } },
+    { id: 'b', name: 'Bat', nameHe: 'בת', firmId: 'f2' },
+    { id: 'c', name: 'Gil', nameHe: 'גיל', firmId: 'f3', phone: '04', tags: { discipline: ['acoustics'] } },
+    { id: 'd', name: 'Dan', nameHe: 'דן', firmId: 'f2' },
+    { id: 's', name: 'Staff', nameHe: 'צוות', tags: { kind: ['internal'], discipline: ['architecture'] } },
+  ];
+  const members = [{ personId: 'd' }];
+  const opts = (pick, qs) => RL.addRowOptions(persons, firms, tags, members, hub, pick, qs);
+  const ids = l => l.map(x => x.code || x.id);
+
+  const all = opts();
+  assert.deepStrictEqual(ids(all.disciplines), ['structural', 'architecture', 'acoustics'], 'hub order first, then the register order; unused and staff-only left out');
+  assert.deepStrictEqual(all.disciplines[1], { code: 'architecture', hubCode: 'ARCH', nameHe: 'אדריכלות', nameEn: 'Architecture', color: 'blue' });
+  assert.strictEqual(all.disciplines[2].hubCode, null);
+  assert.deepStrictEqual(all.firms, [{ id: 'f1', name: 'סטודיו קשת' }, { id: 'f2', name: 'קורות' }, { id: 'f3', name: 'Quiet' }].sort((x, y) => x.name.localeCompare(y.name, 'he')));
+  assert.deepStrictEqual(ids(all.people), ['a', 'b', 'c'], 'on the project and staff left out');
+  assert.deepStrictEqual(all.people[0], { id: 'a', name: 'אבי', firm: 'סטודיו קשת', firmId: 'f1', disciplines: ['architecture'], mobile: '050', email: 'avi@arc.co' }, "the firm's disciplines win over the person's");
+
+  const arch = opts({ discipline: 'architecture' });
+  assert.deepStrictEqual(ids(arch.firms), ['f1', 'f2'].sort((x, y) => (x === 'f1' ? 'סטודיו קשת' : 'קורות').localeCompare(y === 'f1' ? 'סטודיו קשת' : 'קורות', 'he')), 'only offices with the discipline');
+  assert.deepStrictEqual(ids(arch.people), ['a', 'b']);
+  assert.deepStrictEqual(ids(arch.disciplines), ['structural', 'architecture', 'acoustics'], 'its own pick does not narrow its own list');
+
+  assert.deepStrictEqual(ids(opts({ firmId: 'f2' }).disciplines), ['structural', 'architecture'], 'an office narrows the disciplines to its own');
+  assert.deepStrictEqual(ids(opts({ firmId: 'f3' }).disciplines), ['acoustics'], "a firm with none uses its people's");
+  assert.deepStrictEqual(ids(opts({ personId: 'b' }).firms), ['f2'], 'a name narrows the office to its own');
+  assert.deepStrictEqual(ids(opts({ discipline: 'structural', firmId: 'f2' }).people), ['b']);
+  assert.deepStrictEqual(ids(opts({ discipline: 'structural', firmId: 'f1' }).people), [], 'a pick the others rule out leaves nothing');
+
+  assert.deepStrictEqual(ids(opts({}, { discipline: 'STRC' }).disciplines), ['structural'], 'found by hub code');
+  assert.deepStrictEqual(ids(opts({}, { discipline: 'acoust' }).disciplines), ['acoustics'], 'found by English name');
+  assert.deepStrictEqual(ids(opts({}, { discipline: 'אדריכ' }).disciplines), ['architecture'], 'found by Hebrew name');
+  assert.deepStrictEqual(ids(opts({}, { firm: 'beams' }).firms), ['f2']);
+  assert.deepStrictEqual(ids(opts({}, { person: 'avi@' }).people), ['a']);
+  assert.deepStrictEqual(ids(opts({}, { person: 'גיל' }).people), ['c']);
+  assert.deepStrictEqual(RL.addRowOptions(null, null, null, null, null), { disciplines: [], firms: [], people: [] });
+});
+
+test('addRowOptions: a contact with no firm, or a firm the directory lacks, keeps its own disciplines; staff never count', () => {
+  const tags = [
+    { typeCode: 'discipline', code: 'acoustics', nameHe: 'אקוסטיקה', sortOrder: 1 },
+    { typeCode: 'discipline', code: 'fire', nameHe: 'כבאות', sortOrder: 2 },
+  ];
+  const firms = [{ id: 'f1', nameHe: 'משרד', tags: { discipline: ['acoustics'] } }];
+  const persons = [
+    { id: 'loose', nameHe: 'רון', firmName: ' יוזמות ', tags: { discipline: ['acoustics'] } },
+    { id: 'lost', nameHe: 'טל', firmId: 'gone', tags: { discipline: ['acoustics'] } },
+    { id: 'staff', nameHe: 'צוות', firmId: 'f1', tags: { kind: ['internal'], discipline: ['fire'] } },
+  ];
+  const all = RL.addRowOptions(persons, firms, tags, [], [], {}, {});
+  assert.deepStrictEqual(all.disciplines.map(d => d.code), ['acoustics'], 'a discipline only staff hold is left out');
+  assert.deepStrictEqual(all.firms, [], 'no listed firm: a missing one is not offered');
+  assert.deepStrictEqual(all.people.map(p => [p.id, p.firm, p.firmId, p.disciplines]),
+    [['lost', '', null, ['acoustics']], ['loose', 'יוזמות', null, ['acoustics']]]);
+  assert.deepStrictEqual(RL.addRowOptions(persons, firms, tags, [], [], { firmId: 'f1' }, {}).people, [], 'an office pick leaves out people with no firm');
+  assert.deepStrictEqual(RL.addRowOptions(persons, firms, tags, [], [], { discipline: 'acoustics' }, {}).people.map(p => p.id), ['lost', 'loose']);
+});
+
 test('paletteFor: each register tag colour borrows the hub discipline of that hue, grey otherwise', () => {
   const want = { gray: 'LIFT', brown: 'GR', orange: 'LAND', yellow: 'ELEC', green: 'SAFE', teal: 'PLUM', blue: 'ARCH', purple: 'TRAF', pink: 'ACSS', red: 'FIRE' };
   Object.keys(want).forEach(c => assert.strictEqual(RL.paletteFor(c), want[c], c));
