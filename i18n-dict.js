@@ -4101,7 +4101,6 @@ Object.assign(HE_EN, {
 "התאמה ל-KKarcDB": "KKarcDB match",
 "ההתאמה משותפת לכל המשרד": "The match is shared by the whole office",
 "רק מנהל המשרד משנה את ההתאמה": "Only the office admin changes the match",
-"ההתאמה של הפרויקט הזה": "This project's match",
 "ללא התאמה": "No match",
 "ללא קוד": "No code",
 "תחום ב-KKarcDB": "KKarcDB discipline",
