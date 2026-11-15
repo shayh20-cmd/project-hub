@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<title>register-ext harness</title>
+<!-- Browser checks for the add row of Municipality, External reviewers, Contractor and Suppliers
+     (RegisterLinkUI.AddExternalRow and useDirectoryContact in register-link-ui.js), run against a
+     stand-in register: fetch and supabase-js are replaced before the module loads, so nothing
+     reaches the register. Open it through the local server:
+     http://localhost:3000/tests/register-ext-harness.html — the title reads "PASS n/n" or
+     "FAIL …", and the list below says which check failed. -->
+<style>
+:root{--bg:#F5F6F8;--surface:#fff;--surface-2:#FAFBFC;--border:#E8EAED;--text:#1E1F21;--text-2:#6D6E6F;--text-3:#6B7280;--accent:#2563EB}
+body{font-family:system-ui,sans-serif;background:var(--bg);margin:0;padding:16px}
+.box{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-width:820px}
+.box table{width:100%;border-collapse:collapse}
+.box td{padding:6px 8px;font-size:12px;vertical-align:middle}
+.ov-edit-input{font:inherit;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;width:100%;box-sizing:border-box}
+#out{font:12px ui-monospace,monospace;padding:12px 0;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="box"><table><tbody id="holder"></tbody></table></div>
+<pre id="out">running…</pre>
+<script src="/react-18.3.1.min.js"></script>
+<script src="/react-dom-18.3.1.min.js"></script>
+<script src="/register-link.js"></script>
+<script>
+window.H = (function () {
+  const H = { calls: [] };
+  const json = (body, status) => Promise.resolve(new Response(body === null ? null : JSON.stringify(body), { status: status || 200, headers: { 'Content-Type': 'application/json' } }));
+  H.persons = [
+    { id: 'm1', name: 'City Engineer', nameHe: 'מהנדסת העיר', firmId: 'lod', mobile: '050-1', email: 'eng@lod.il' },
+    { id: 'm2', nameHe: 'סגן ראש העיר', firmId: 'lod' },
+    { id: 'b1', nameHe: 'מנהל עבודה', firmId: 'bld', phone: '03-1' },
+    { id: 'c1', nameHe: 'יועצת', firmId: 'cons' },
+    { id: 'u1', nameHe: 'עובד שלנו', firmId: 'us' },
+  ];
+  H.firms = [
+    { id: 'lod', name: 'Lod city', nameHe: 'עיריית לוד', tags: { kind: ['municipality'] } },
+    { id: 'bld', nameHe: 'בונים בע"מ', tags: { kind: ['contractor'] } },
+    { id: 'cons', nameHe: 'משרד ייעוץ', tags: { kind: ['consultant'] } },
+    { id: 'us', nameHe: 'המשרד שלנו', tags: { kind: ['internal'] } },
+  ];
+  H.tags = [
+    { typeCode: 'kind', code: 'consultant', nameHe: 'יועץ', nameEn: 'Consultant', sortOrder: 1 },
+    { typeCode: 'kind', code: 'contractor', nameHe: 'קבלן', nameEn: 'Contractor', sortOrder: 2 },
+    { typeCode: 'kind', code: 'municipality', nameHe: 'עירייה', nameEn: 'Municipality', sortOrder: 3 },
+    { typeCode: 'kind', code: 'internal', nameHe: 'פנימי', nameEn: 'Internal', sortOrder: 4 },
+  ];
+  window.fetch = (url, init) => {
+    const method = (init && init.method) || 'GET';
+    const u = String(url);
+    H.calls.push([method, u.replace('https://reg.example', '')]);
+    if (u === '/api/register-config') return json({ supabaseUrl: 'https://sb.example', supabaseAnonKey: 'k', api: 'https://reg.example', hubUrl: null });
+    const path = u.replace('https://reg.example', '');
+    if (path === '/api/me') return json({ role: 'viewer' });
+    if (path === '/api/persons') return json(H.persons);
+    if (path === '/api/firms') return json(H.firms);
+    if (path === '/api/tags') return json(H.tags);
+    return json({ error: 'unexpected ' + path }, 500);
+  };
+  window.supabase = { createClient: () => ({ auth: {
+    getSession: () => Promise.resolve({ data: { session: { access_token: 'x.e30.y' } } }),
+    refreshSession: () => Promise.resolve({ data: { session: null } }),
+    onAuthStateChange: () => {},
+  } }) };
+  return H;
+})();
+</script>
+<script src="/register-link-ui.js"></script>
+<script>
+(async function () {
+  const UI = window.RegisterLinkUI;
+  // A page without the window's focus fires no focus events on focus(); fire them as a focused window would.
+  const realFocus = HTMLElement.prototype.focus;
+  HTMLElement.prototype.focus = function (o) {
+    const was = document.activeElement;
+    realFocus.call(this, o);
+    if (document.hasFocus() || document.activeElement !== this || was === this) return;
+    if (was && was !== document.body) was.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: this }));
+    this.dispatchEvent(new FocusEvent('focusin', { bubbles: true, relatedTarget: was }));
+  };
+  const holder = document.getElementById('holder');
+  const tick = (ms = 40) => new Promise(r => setTimeout(r, ms));
+  const until = async (fn, ms = 2000) => { for (let t = 0; t < ms; t += 20) { const v = fn(); if (v) return v; await tick(20); } return fn(); };
+  const type = (el, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
+  const key = (el, k) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+  const row = () => document.querySelector('.rl-addrow');
+  const fields = () => (row() ? [...row().querySelectorAll('input')] : []);
+  const values = () => fields().map(f => f.value).join('|');
+  const list = () => document.querySelector('.rl-combo-list');
+  const opts = () => (list() ? [...list().querySelectorAll('[role=option]')].map(o => o.textContent) : []);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const results = [];
+  const check = (name, ok, detail) => results.push({ name, ok: !!ok, detail });
+
+  let open = false, added = [], exclude = [], live = null;
+  const root = ReactDOM.createRoot(holder);
+  function Host() { live = UI.useDirectoryContact(); return React.createElement(UI.AddExternalRow, { open, exclude, colSpan: 6, onClose: () => { open = false; render(); }, onAdd: p => { added.push(p); exclude = exclude.concat(p.id); render(); } }); }
+  const render = () => root.render(React.createElement(Host));
+  render();
+
+  try {
+    await tick(100);
+    check('nothing until it is opened', !row());
+    open = true; render();
+    await until(() => fields().length === 3 && list());
+    check('name, organization and role start empty, the name focused with its list open',
+      values() === '||' && document.activeElement === fields()[0] && !!list(), values());
+    check('every contact but the office\'s own', opts().length === 4 &&!opts().some(t => /עובד שלנו/.test(t)), JSON.stringify(opts()));
+    fields()[2].focus(); await until(list);
+    check('the roles are the register\'s kinds, never Internal', same(opts(), ['יועץConsultant', 'קבלןContractor', 'עירייהMunicipality']), JSON.stringify(opts()));
+    type(fields()[2], 'munic'); await tick();
+    key(fields()[2], 'Enter'); await tick(60);
+    check('a role narrows the organizations, and the focus moves there', fields()[2].value === 'עירייה' && document.activeElement === fields()[1] && same(opts(), ['עיריית לוד']), JSON.stringify(opts()));
+    key(fields()[1], 'Enter'); await tick(60);
+    check('then the names, to that organization\'s people', document.activeElement === fields()[0] && same(opts().length, 2), JSON.stringify(opts()));
+    type(fields()[0], 'engineer'); await tick();
+    key(fields()[0], 'Enter'); await tick(60);
+    const save = () => row().querySelector('.ov-row-save-btn');
+    check('a name moves the focus to ✓ and shows the phone and email',
+      document.activeElement === save() && !save().disabled && /050-1/.test(row().textContent) && /eng@lod\.il/.test(row().textContent), row().textContent);
+    save().click(); await tick(60);
+    check('✓ hands the person to the page', added.length === 1 && added[0].id === 'm1' && added[0].role === 'עירייה' && added[0].firm === 'עיריית לוד', JSON.stringify(added));
+    check('the row empties for the next one, the name focused', values() === '||' && document.activeElement === fields()[0], values());
+    check('someone already in the section is not offered again', !opts().some(t => /מהנדסת העיר/.test(t)), JSON.stringify(opts()));
+    type(fields()[0], 'מנהל'); await tick();
+    key(fields()[0], 'Enter'); await tick(60);
+    check('a name picked first fills its organization and its one role', values() === 'מנהל עבודה|בונים בע"מ|קבלן', values());
+    const l = live('m1');
+    check('a section contact reads live from the register', l && l.name === 'מהנדסת העיר' && l.firm === 'עיריית לוד' && l.mobile === '050-1', JSON.stringify(l));
+    check('an unknown id reads nothing', live('nope') === null && live(undefined) === null);
+    key(fields()[0], 'Escape'); await tick();
+    check('Escape with the list shut closes the row', !row());
+  } catch (e) { check('the checks ran to the end', false, e && e.stack); }
+
+  const failed = results.filter(r => !r.ok);
+  document.title = failed.length ? 'FAIL ' + failed.map(r => r.name).join('; ') : 'PASS ' + results.length + '/' + results.length;
+  document.getElementById('out').textContent = results.map(r => (r.ok ? 'ok   ' : 'FAIL ') + r.name + (r.ok || r.detail === undefined ? '' : '  — ' + r.detail)).join('\n');
+})();
+</script>
+</body>
+</html>

@@ -4113,6 +4113,7 @@ Object.assign(HE_EN, {
 "איש הקשר יוסר גם מהשורות: {rows}.": "They also leave these rows: {rows}.",
 "איש הקשר נשאר ב-KKarcDB.": "The contact stays in KKarcDB.",
 "העובד נשאר ברשימת העובדים של המשרד.": "They stay on the office's staff list.",
+"איש הקשר לא שמור ב-KKarcDB, וימחק.": "This contact isn't in KKarcDB, so it will be deleted.",
 });
 
 window.I18N_HE_EN = HE_EN;

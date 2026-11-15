@@ -294,6 +294,59 @@
       .sort((a, b) => a.name.localeCompare(b.name, 'he'));
   }
 
+  /* The add row of Municipality, External reviewers, Contractor and Suppliers: a name, an
+     organization and a kind (the register's Kind tags — Municipality, Contractor…; a person's
+     own and their firm's), each list narrowed by the other two picks and by its own search.
+     Every register contact counts except the office's own people and those already in the
+     section (`exclude`, person ids). `pick` = { kind, firmId, personId }; `qs` = the searches. */
+  const NOT_A_KIND = ['internal', 'ex_internal'];
+  function contactRowOptions(persons, firms, tags, exclude, pick, qs) {
+    const pk = pick || {};
+    const q = qs || {};
+    const firmById = new Map((firms || []).map(f => [f.id, f]));
+    const skip = new Set(exclude || []);
+    const kindTags = (tags || []).filter(t => t.typeCode === 'kind' && !NOT_A_KIND.includes(t.code));
+    const kindByCode = new Map(kindTags.map(t => [t.code, t]));
+    const contacts = (persons || [])
+      .map(p => ({ p, firm: (p.firmId && firmById.get(p.firmId)) || null }))
+      .filter(({ p, firm }) => p.isContact !== false && !skip.has(p.id) && nameIn(p, 'he')
+        && !tagsOf(p, 'kind').concat(tagsOf(firm, 'kind')).some(k => NOT_A_KIND.includes(k)))
+      .map(c => Object.assign(c, { kinds: [...new Set(tagsOf(c.p, 'kind').concat(tagsOf(c.firm, 'kind')))].filter(k => kindByCode.has(k)) }));
+    const fits = (c, dim) => (dim === 'kind' || !pk.kind || c.kinds.includes(pk.kind))
+      && (dim === 'firm' || !pk.firmId || (c.firm && c.firm.id) === pk.firmId)
+      && (dim === 'person' || !pk.personId || c.p.id === pk.personId);
+    const kindLabel = code => { const t = kindByCode.get(code); return (t && (t.nameHe || t.nameEn)) || code; };
+
+    const codes = new Set();
+    contacts.filter(c => fits(c, 'kind')).forEach(c => c.kinds.forEach(k => codes.add(k)));
+    const needleK = needleOf(q.kind);
+    const kinds = kindTags.filter(t => codes.has(t.code))
+      .slice().sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.code).localeCompare(String(b.code)))
+      .map(t => ({ code: t.code, nameHe: kindLabel(t.code), nameEn: t.nameEn || '' }))
+      .filter(k => hit(needleK, [k.code, k.nameHe, k.nameEn]));
+
+    const firmSeen = new Map();
+    contacts.filter(c => c.firm && fits(c, 'firm')).forEach(c => firmSeen.set(c.firm.id, c.firm));
+    const needleF = needleOf(q.firm);
+    const firmList = [...firmSeen.values()]
+      .filter(f => hit(needleF, [f.name, f.nameHe]))
+      .map(f => ({ id: f.id, name: nameIn(f, 'he') }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+    const needleP = needleOf(q.person);
+    const people = contacts.filter(c => fits(c, 'person'))
+      .filter(c => hit(needleP, [c.p.name, c.p.nameHe, c.p.email, c.p.phone, c.p.mobile]))
+      .map(c => ({
+        id: c.p.id, name: nameIn(c.p, 'he'),
+        firm: c.firm ? nameIn(c.firm, 'he') : String(c.p.firmName || '').trim(), firmId: c.firm ? c.firm.id : null,
+        kinds: c.kinds.slice(), role: c.kinds.map(kindLabel).join(', '),
+        mobile: c.p.mobile || '', phone: c.p.phone || '', email: c.p.email || '',
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+    return { kinds, firms: firmList, people };
+  }
+
   /* What the consultants table's × takes off the project: the row's people (they stay in the
      directory), their names, and the other rows that share them — those rows go too, since a row
      is a firm's discipline and the register lists people, not rows. */
@@ -313,8 +366,11 @@
      firmId, personId }; `qs` = the three searches. Only contacts addableContacts would offer count.
      A contact's disciplines are its firm's, its own when the firm has none — as in the table. The
      disciplines come in the table's order: the hub's codes in the hub's order, then the rest in
-     the register's. Names are Hebrew first, as in the table; searches find either language. */
-  function addRowOptions(persons, firms, tags, members, hubDisciplines, pick, qs) {
+     the register's. Names are Hebrew first, as in the table; searches find either language.
+     `local` adds the office's own people, kept by the hub rather than the register:
+     { firm: { id, name }, disciplines: [register codes], people: [{ id, name, mobile, email }] };
+     they come out marked `local: true`, and a register firm of the same name gives way to it. */
+  function addRowOptions(persons, firms, tags, members, hubDisciplines, pick, qs, local) {
     const pk = pick || {};
     const q = qs || {};
     const firmById = new Map((firms || []).map(f => [f.id, f]));
@@ -322,12 +378,19 @@
     const discTags = (tags || []).filter(t => t.typeCode === 'discipline');
     const tagByCode = new Map(discTags.map(t => [t.code, t]));
     const hubOrder = new Map((hubDisciplines || []).map((d, i) => [d.id, i]));
+    const localName = local && local.firm ? String(local.firm.name || '').trim() : '';
+    const isLocalFirm = f => !!localName && !!f && [f.name, f.nameHe].some(n => String(n || '').trim() === localName);
     const contacts = (persons || [])
       .filter(p => p.isContact !== false && !tagsOf(p, 'kind').includes('internal') && !onProject.has(p.id) && nameIn(p, 'he'))
       .map(p => {
         const firm = (p.firmId && firmById.get(p.firmId)) || null;
         return { p, firm, discs: tagsOf(firm, 'discipline').length ? tagsOf(firm, 'discipline') : tagsOf(p, 'discipline') };
-      });
+      })
+      .filter(c => !isLocalFirm(c.firm))
+      .concat(localName ? (local.people || []).filter(x => x && x.id && String(x.name || '').trim()).map(x => ({
+        p: { id: x.id, nameHe: String(x.name).trim(), mobile: x.mobile || '', email: x.email || '' },
+        firm: { id: local.firm.id, nameHe: localName }, discs: (local.disciplines || []).filter(Boolean), local: true,
+      })) : []);
     const fits = (c, skip) => (skip === 'discipline' || !pk.discipline || c.discs.includes(pk.discipline))
       && (skip === 'firm' || !pk.firmId || (c.firm && c.firm.id) === pk.firmId)
       && (skip === 'person' || !pk.personId || c.p.id === pk.personId);
@@ -365,6 +428,7 @@
         id: c.p.id, name: nameIn(c.p, 'he'),
         firm: c.firm ? nameIn(c.firm, 'he') : String(c.p.firmName || '').trim(), firmId: c.firm ? c.firm.id : null,
         disciplines: c.discs.slice(), mobile: c.p.mobile || c.p.phone || '', email: c.p.email || '',
+        ...(c.local ? { local: true } : {}),
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'he'));
 
@@ -544,7 +608,7 @@
     matchProjects, registerCodeOf, hubDisciplineFor, disciplineMatchRows, buildConsultantRows, paletteFor, projectFacts, subjectOf, tidyReturnAddress,
     nextEntry, hasConsultants, createRegisterClient,
     isConsultant, consultantFirms, nameIn, tagLabel, canEditRegister, editablePerson, disciplineChoices,
-    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts, addRowOptions, removalOf,
+    firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts, addRowOptions, contactRowOptions, removalOf,
     blank, newContactBody, newFirmBody, withEdit, writeErrorOf,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;

@@ -237,6 +237,24 @@ window.H = (function () {
   H.delStatus = 403;
   const res3 = await rm({ contacts: [{ personId: 'b' }] });
   check('a refusal comes back as a sentence', /אין הרשאה/.test(res3 || ''), res3);
+
+  // The office's own people, kept by the hub: offered in the same lists, added through onAdd, never PUT.
+  const holder3 = document.createElement('tbody'); document.querySelector('.box table').appendChild(holder3);
+  const localAdds = [];
+  const local = { firm: { id: '__office', name: 'המשרד שלנו' }, disciplines: ['architecture'], people: [{ id: 'staff:1', name: 'שי', mobile: '054', email: 'shay@us' }], onAdd: p => localAdds.push(p.id) };
+  ReactDOM.createRoot(holder3).render(React.createElement(UI.AddContactRow, { data: { registerProjectId: 'p1' }, hubDisciplines: hub, colSpan: 6, local }));
+  btn().click();
+  const row3 = () => holder3.querySelector('.rl-addrow');
+  await until(() => row3() && row3().querySelectorAll('input').length === 3);
+  const f3 = () => [...row3().querySelectorAll('input')];
+  f3()[2].focus(); await until(list);
+  type(f3()[2], 'שי'); await tick();
+  key(f3()[2], 'Enter'); await tick(60);
+  check("our office's people are offered, filling our office and ARCH", f3().map(f => f.value).join('|') === 'ARCH · אדריכלות|המשרד שלנו|שי', f3().map(f => f.value).join('|'));
+  const puts = H.calls.filter(c => c[0] === 'PUT').length;
+  row3().querySelector('.ov-row-save-btn').click(); await tick(60);
+  check('✓ adds them through the page, not the register', localAdds.join() === 'staff:1' && H.calls.filter(c => c[0] === 'PUT').length === puts, localAdds.join());
+  btn().click(); await tick();
   } catch (e) { check('the checks ran to the end', false, e && e.stack); }
 
   const failed = results.filter(r => !r.ok);
