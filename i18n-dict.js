@@ -4109,10 +4109,10 @@ Object.assign(HE_EN, {
 "הזז את {name} — חצים למעלה ולמטה": "Move {name} — up and down arrows",
 "הזז את האפשרות — חצים למעלה ולמטה": "Move the option — up and down arrows",
 "הסר את {name} מהפרויקט": "Remove {name} from the project",
-"להסיר את {row} מהפרויקט?": "Remove {row} from the project?",
-"יוסרו מהפרויקט ב-KKarcDB: {names}.": "Taken off the project in KKarcDB: {names}.",
-"הם יוסרו גם מהשורות: {rows}.": "They also leave these rows: {rows}.",
-"אנשי הקשר עצמם נשארים ב-KKarcDB.": "The contacts themselves stay in KKarcDB.",
+"להסיר את {name} ({row}) מהפרויקט?": "Remove {name} ({row}) from the project?",
+"איש הקשר יוסר גם מהשורות: {rows}.": "They also leave these rows: {rows}.",
+"איש הקשר נשאר ב-KKarcDB.": "The contact stays in KKarcDB.",
+"העובד נשאר ברשימת העובדים של המשרד.": "They stay on the office's staff list.",
 });
 
 window.I18N_HE_EN = HE_EN;
