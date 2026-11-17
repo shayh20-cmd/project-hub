@@ -322,6 +322,126 @@
     }, 'הוספה');
   }
 
+  /* The consultants table's ×: takes a row's people off the project in the register (they stay
+     in the directory), then reads the project again. For the register's editors only — null for
+     anyone else, so the page shows no ×. Resolves to an error sentence, or null when it worked;
+     someone already gone (404) counts as done. */
+  function useRemoveConsultant(data) {
+    const s = useLinked(data);
+    const id = data && data.registerProjectId;
+    const ready = s.config === 'on' && s.signedIn && !!id;
+    const haveMe = !!s.me;
+    useEffect(() => { if (ready && !haveMe) loadMe(); }, [ready, haveMe]);
+    if (!ready || !(s.me && s.me.state === 'ok' && RL.canEditRegister(s.me.data.role))) return null;
+    return row => {
+      const ids = RL.removalOf(row, []).personIds;
+      return Promise.all(ids.map(pid => client.send('DELETE', '/api/projects/' + encodeURIComponent(id) + '/members/' + encodeURIComponent(pid))
+        .catch(() => ({ state: 'unreachable' }))))
+        .then(rs => {
+          if (rs.some(r => r.state === 'signed-out')) recheck();
+          reloadProject(id);
+          const bad = rs.find(r => r.state !== 'ok' && r.state !== 'not-found');
+          return bad ? RL.writeErrorOf(bad).text : null;
+        });
+    };
+  }
+
+  /* The add row of the other contact sections (Municipality, External reviewers, Contractor,
+     Suppliers): a name, an organization and a kind from the register, each narrowing the other
+     two (RL.contactRowOptions). These sections are the hub's own lists, so a pick is handed to
+     the page — onAdd(person) — rather than written to the register. `open`/`onClose` belong to
+     the page, `exclude` is the section's person ids. After a pick the focus goes to the next
+     empty field, or to ✓ once there is a name. */
+  function AddExternalRow({ open, onClose, exclude, onAdd, colSpan }) {
+    const s = useDirectory();
+    const [pk, setPk] = useState({});
+    const [qs, setQs] = useState({});
+    const refs = { person: useRef(null), firm: useRef(null), kind: useRef(null), save: useRef(null) };
+    const d = s.directory;
+    const ok = !!(d && d.state === 'ok');
+    const ex = (exclude || []).join();
+    const optionsFor = q => RL.contactRowOptions(d.data.persons, d.data.firms, d.data.tags, exclude, pk, q);
+    const base = useMemo(() => (open && ok ? optionsFor({}) : null), [open, ok, d, ex, pk]);
+    const opts = useMemo(() => (open && ok ? optionsFor(qs) : null), [open, ok, d, ex, pk, qs]);
+    useEffect(() => { if (!open) { setPk({}); setQs({}); } }, [open]);
+    useEffect(() => { if (open && ok && refs.person.current) refs.person.current.focus(); }, [open, ok]);
+    if (!open) return null;
+    const cols = colSpan || 6;
+    const status = directoryStatus(s);
+    if (status.kind !== 'ok') {
+      return h('tr', { className: 'ov-row-editing' }, h('td', { colSpan: cols, className: 'rl-cell' },
+        h('div', { className: 'rl-line' }, h(DirectoryNotice, { status }), button('ביטול', onClose))));
+    }
+    const kind = base.kinds.find(x => x.code === pk.kind) || null;
+    const firm = base.firms.find(x => x.id === pk.firmId) || null;
+    const person = base.people.find(x => x.id === pk.personId) || null;
+    const query = key => v => setQs(q => Object.assign({}, q, { [key]: v }));
+    const focusEl = el => setTimeout(() => { if (el) el.focus(); }, 0);
+    // after a pick: a name leads to ✓; an organization to the name; a kind to the organization
+    // when it is still empty, else to the name
+    const go = key => () => focusEl(refs[key].current);
+    const next = after => after === 'person' ? go('save')
+      : after === 'firm' ? () => focusEl(refs[pk.personId ? 'save' : 'person'].current)
+        : () => focusEl(refs[pk.personId ? 'save' : pk.firmId ? 'person' : 'firm'].current);
+    const add = () => {
+      if (!person) return;
+      onAdd(person);
+      setPk({}); setQs({});
+      focusEl(refs.person.current);
+    };
+    const skip = { 'data-i18n-skip': '' };
+    return h('tr', { className: 'ov-row-editing rl-addrow' },
+      h('td', null, h(Combo, {
+        inputRef: refs.person, placeholder: 'שם', label: person ? person.name : '',
+        options: opts.people, keyOf: x => x.id, textOf: x => x.name,
+        renderOption: x => h('span', Object.assign({ className: 'rl-combo-row rl-combo-person' }, skip),
+          h('span', null, x.name), x.firm || x.role ? h('span', { className: 'rl-add-firm' }, [x.firm, x.role].filter(Boolean).join(' · ')) : null),
+        onPick: x => setPk(v => Object.assign({}, v, { personId: x.id, firmId: x.firmId, kind: v.kind || (x.kinds.length === 1 ? x.kinds[0] : null) })),
+        onClear: () => setPk(v => Object.assign({}, v, { personId: null })),
+        onQuery: query('person'), onDone: next('person'), onEscape: onClose,
+      })),
+      h('td', null, h(Combo, {
+        inputRef: refs.firm, placeholder: 'ארגון', label: firm ? firm.name : '',
+        options: opts.firms, keyOf: x => x.id, textOf: x => x.name,
+        onPick: x => setPk(v => Object.assign({}, v, { firmId: x.id })),
+        onClear: () => setPk(v => Object.assign({}, v, { firmId: null, personId: null })),
+        onQuery: query('firm'), onDone: next('firm'), onEscape: onClose,
+      })),
+      h('td', null, h(Combo, {
+        inputRef: refs.kind, placeholder: 'תפקיד', label: kind ? kind.nameHe : '',
+        options: opts.kinds, keyOf: x => x.code, textOf: x => x.nameHe,
+        renderOption: x => h('span', Object.assign({ className: 'rl-combo-row' }, skip),
+          h('span', null, x.nameHe), x.nameEn && x.nameEn !== x.nameHe ? h('span', { className: 'rl-add-firm' }, x.nameEn) : null),
+        onPick: x => setPk(v => Object.assign({}, v, { kind: x.code })),
+        onClear: () => setPk(v => Object.assign({}, v, { kind: null })),
+        onQuery: query('kind'), onDone: next('kind'), onEscape: onClose,
+      })),
+      h('td', null, h('div', Object.assign({ className: 'ov-con-sub' }, skip), person && (person.mobile || person.phone) ? person.mobile || person.phone : '—')),
+      h('td', null, h('div', Object.assign({ className: 'ov-con-sub' }, skip), person && person.email ? person.email : '—')),
+      h('td', { className: 'ov-row-actions' },
+        h('button', {
+          ref: refs.save, type: 'button', className: 'ov-row-save-btn', disabled: !person,
+          title: 'הוספה לפרויקט', 'aria-label': 'הוספה לפרויקט', onClick: add,
+          onKeyDown: e => { if (e.key === 'Escape') onClose(); },
+        }, '✓'),
+        h('button', { type: 'button', className: 'ov-row-del-btn', title: 'ביטול', 'aria-label': 'ביטול', onClick: onClose }, '×')));
+  }
+
+  /* A section contact the page keeps with a register person id, read live from the directory:
+     the name, organization, kinds, phones and email as the register holds them now, or null
+     while the directory is not there (the page then shows what it kept). */
+  function useDirectoryContact() {
+    const s = useDirectory();
+    const d = s.directory;
+    const ok = !!(d && d.state === 'ok');
+    return useMemo(() => {
+      if (!ok) return () => null;
+      const all = RL.contactRowOptions(d.data.persons, d.data.firms, d.data.tags, [], {}, {}).people;
+      const byId = new Map(all.map(p => [p.id, p]));
+      return id => (id && byId.get(id)) || null;
+    }, [ok, d]);
+  }
+
   /* One field of the add row: an input whose list opens on focus, narrows as you type, and takes
      its first entry on Enter (the arrows move through it). `label` is the pick's text, `onQuery`
      hands the search to the caller, who narrows `options`; `onDone` follows a pick (the next
@@ -418,7 +538,7 @@
   /* The add row: a discipline, an office and a name, each list narrowed by the other two picks
      (RL.addRowOptions). Picking a name fills its office, and its discipline when it has just one;
      ✓ puts that person on the project in the register, and the row empties for the next one. */
-  function AddContactRow({ data, hubDisciplines, colSpan }) {
+  function AddContactRow({ data, hubDisciplines, colSpan, local }) {
     const s = useLinked(data);
     const id = data && data.registerProjectId;
     const open = !!id && s.adding === id;
@@ -430,9 +550,9 @@
     const p = id ? s.projects[id] : null;
     const d = s.directory;
     const ok = !!(p && p.state === 'ok' && d && d.state === 'ok');
-    const optionsFor = q => RL.addRowOptions(d.data.persons, d.data.firms, d.data.tags, p.data.members, hubDisciplines, pk, q);
-    const base = useMemo(() => (open && ok ? optionsFor({}) : null), [open, ok, p, d, hubDisciplines, pk]);
-    const opts = useMemo(() => (open && ok ? optionsFor(qs) : null), [open, ok, p, d, hubDisciplines, pk, qs]);
+    const optionsFor = q => RL.addRowOptions(d.data.persons, d.data.firms, d.data.tags, p.data.members, hubDisciplines, pk, q, local);
+    const base = useMemo(() => (open && ok ? optionsFor({}) : null), [open, ok, p, d, hubDisciplines, pk, local]);
+    const opts = useMemo(() => (open && ok ? optionsFor(qs) : null), [open, ok, p, d, hubDisciplines, pk, qs, local]);
     useEffect(() => { if (!open) { setPk({}); setQs({}); setError(null); setBusy(false); } }, [open]);
     useEffect(() => { if (open && ok && refs.discipline.current) refs.discipline.current.focus(); }, [open, ok]);
     if (!open) return null;
@@ -453,6 +573,8 @@
     const chip = x => (k => ({ background: 'var(--disc-' + k + '-bg)', color: 'var(--disc-' + k + ')' }))(x.hubCode || RL.paletteFor(x.color));
     const add = () => {
       if (!person || busy) return;
+      // the office's own people join the project's team in the hub, not the register
+      if (person.local) { local.onAdd(person); setPk({}); setQs({}); focus('discipline')(); return; }
       setBusy(true); setError(null);
       client.send('PUT', '/api/projects/' + encodeURIComponent(id) + '/members/' + encodeURIComponent(person.id), null)
         .then(r => {
@@ -613,7 +735,7 @@
   const retryMe = () => { if (snap.me && snap.me.state !== 'ok') set({ me: null }); };
 
   window.RegisterLinkUI = {
-    useConsultantRows, FactsCard, ConsultantsNotice, EditInHub, AddContact, AddContactRow, AutoLink, DisciplineMatch,
+    useConsultantRows, useRemoveConsultant, useDirectoryContact, FactsCard, ConsultantsNotice, EditInHub, AddContact, AddContactRow, AddExternalRow, AutoLink, DisciplineMatch,
     useDirectory, directoryStatus, DirectoryNotice, write, hubLink, retryMe,
   };
   boot();

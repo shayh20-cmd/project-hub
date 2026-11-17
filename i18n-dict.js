@@ -4105,6 +4105,15 @@ Object.assign(HE_EN, {
 "ללא קוד": "No code",
 "תחום ב-KKarcDB": "KKarcDB discipline",
 "הוספה לפרויקט": "Add to project",
+"גרור לשינוי הסדר (או חצים למעלה/למטה)": "Drag to reorder (or use the up and down arrows)",
+"הזז את {name} — חצים למעלה ולמטה": "Move {name} — up and down arrows",
+"הזז את האפשרות — חצים למעלה ולמטה": "Move the option — up and down arrows",
+"הסר את {name} מהפרויקט": "Remove {name} from the project",
+"להסיר את {name} ({row}) מהפרויקט?": "Remove {name} ({row}) from the project?",
+"איש הקשר יוסר גם מהשורות: {rows}.": "They also leave these rows: {rows}.",
+"איש הקשר נשאר ב-KKarcDB.": "The contact stays in KKarcDB.",
+"העובד נשאר ברשימת העובדים של המשרד.": "They stay on the office's staff list.",
+"איש הקשר לא שמור ב-KKarcDB, וימחק.": "This contact isn't in KKarcDB, so it will be deleted.",
 "שנה סוג": "Change type",
 });
 

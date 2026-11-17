@@ -399,11 +399,20 @@ test('send: 403 refused, 404 not-found, 5xx and a network failure unreachable, n
   assert.strictEqual(seen.length, 0);
 });
 
-test('send: only POST, PATCH and PUT — anything else throws, and nothing is sent', async () => {
+test('send: only POST, PATCH, PUT and DELETE — anything else throws, and nothing is sent', async () => {
   const seen = [];
   const c = RL.createRegisterClient(config, fakeSupabase(), fakeWriteFetch([{ status: 204 }], seen));
-  for (const m of ['GET', 'DELETE', 'patch']) await assert.rejects(c.send(m, '/api/firms/f1', {}), /POST, PATCH and PUT/, m);
+  for (const m of ['GET', 'delete', 'patch']) await assert.rejects(c.send(m, '/api/firms/f1', {}), /POST, PATCH, PUT and DELETE/, m);
   assert.strictEqual(seen.length, 0);
+});
+
+test('send: a DELETE carries the token and no body; 204 is ok, 404 not-found', async () => {
+  const seen = [];
+  const c = RL.createRegisterClient(config, fakeSupabase(), fakeWriteFetch([{ status: 204 }, { status: 404 }], seen));
+  assert.deepStrictEqual(await c.send('DELETE', '/api/projects/p1/members/a'), { state: 'ok', data: null });
+  assert.deepStrictEqual(await c.send('DELETE', '/api/projects/p1/members/a'), { state: 'not-found' });
+  assert.deepStrictEqual(seen.map(x => [x.method, x.url.slice(x.url.indexOf('/api/')), x.body, x.type, !!x.auth]),
+    [['DELETE', '/api/projects/p1/members/a', undefined, undefined, true], ['DELETE', '/api/projects/p1/members/a', undefined, undefined, true]]);
 });
 
 // ── Settings: consultants and firms (spec 2026-10-07 §2) ──
@@ -662,6 +671,77 @@ test('addRowOptions: a contact with no firm, or a firm the directory lacks, keep
     [['lost', '', null, ['acoustics']], ['loose', 'יוזמות', null, ['acoustics']]]);
   assert.deepStrictEqual(RL.addRowOptions(persons, firms, tags, [], [], { firmId: 'f1' }, {}).people, [], 'an office pick leaves out people with no firm');
   assert.deepStrictEqual(RL.addRowOptions(persons, firms, tags, [], [], { discipline: 'acoustics' }, {}).people.map(p => p.id), ['lost', 'loose']);
+});
+
+test('removalOf: the row\'s people, their names, and the other rows that share them', () => {
+  const rows = [
+    { id: 'f:1|arch', contacts: [{ personId: 'a', name: 'אבי' }, { personId: 'b', name: 'בת' }, { personId: 'a', name: 'אבי' }] },
+    { id: 'f:1|str', contacts: [{ personId: 'a', name: 'אבי' }] },
+    { id: 'f:2|el', contacts: [{ personId: 'c', name: 'גיל' }] },
+    { id: 'p:x|-', contacts: [{ name: 'בלי מזהה' }] },
+  ];
+  assert.deepStrictEqual(RL.removalOf(rows[0], rows), { personIds: ['a', 'b'], names: ['אבי', 'בת'], alsoIn: [rows[1]] });
+  assert.deepStrictEqual(RL.removalOf(rows[2], rows), { personIds: ['c'], names: ['גיל'], alsoIn: [] });
+  assert.deepStrictEqual(RL.removalOf(rows[3], rows), { personIds: [], names: [], alsoIn: [] }, 'nobody to take off');
+  assert.deepStrictEqual(RL.removalOf(null, rows), { personIds: [], names: [], alsoIn: [] });
+});
+
+test('contactRowOptions: kinds, organizations and names narrow each other; staff and the section\'s own left out', () => {
+  const tags = [
+    { typeCode: 'kind', code: 'consultant', nameHe: 'יועץ', nameEn: 'Consultant', sortOrder: 1 },
+    { typeCode: 'kind', code: 'contractor', nameHe: 'קבלן', nameEn: 'Contractor', sortOrder: 2 },
+    { typeCode: 'kind', code: 'municipality', nameHe: 'עירייה', nameEn: 'Municipality', sortOrder: 3 },
+    { typeCode: 'kind', code: 'internal', nameHe: 'פנימי', nameEn: 'Internal', sortOrder: 4 },
+    { typeCode: 'discipline', code: 'architecture', nameHe: 'אדריכלות', sortOrder: 1 },
+  ];
+  const firms = [
+    { id: 'lod', name: 'Lod city', nameHe: 'עיריית לוד', tags: { kind: ['municipality'] } },
+    { id: 'bld', nameHe: 'בונים בע"מ', tags: { kind: ['contractor'] } },
+    { id: 'us', nameHe: 'המשרד שלנו', tags: { kind: ['internal'] } },
+  ];
+  const persons = [
+    { id: 'm1', nameHe: 'מהנדסת העיר', firmId: 'lod', mobile: '050', email: 'eng@lod.il' },
+    { id: 'm2', nameHe: 'סגן', firmId: 'lod', tags: { kind: ['consultant'] } },
+    { id: 'b1', nameHe: 'מנהל עבודה', firmId: 'bld', phone: '03' },
+    { id: 'u1', nameHe: 'עובד שלנו', firmId: 'us' },
+    { id: 'i1', nameHe: 'פנימי בלי משרד', tags: { kind: ['internal'] } },
+    { id: 'x', nameHe: 'כבר בפנים', firmId: 'lod' },
+    { id: 'n', nameHe: 'בלי סוג' },
+    { id: 'login', name: 'Login', isContact: false },
+  ];
+  const o = (pick, qs) => RL.contactRowOptions(persons, firms, tags, ['x'], pick, qs);
+  const ids = l => l.map(v => v.code || v.id);
+  const all = o();
+  assert.deepStrictEqual(ids(all.kinds), ['consultant', 'contractor', 'municipality'], 'in the register\'s order, never Internal');
+  assert.deepStrictEqual(ids(all.people).sort(), ['b1', 'm1', 'm2', 'n'], 'the office, the section\'s own and sign-ins left out');
+  assert.deepStrictEqual(all.people.find(p => p.id === 'm2'), { id: 'm2', name: 'סגן', firm: 'עיריית לוד', firmId: 'lod', kinds: ['consultant', 'municipality'], role: 'יועץ, עירייה', mobile: '', phone: '', email: '' }, "a person's kinds are their own and their firm's");
+  assert.deepStrictEqual(ids(o({ kind: 'municipality' }).firms), ['lod']);
+  assert.deepStrictEqual(ids(o({ kind: 'municipality' }).people), ['m2', 'm1'].sort((a, b) => (a === 'm1' ? 'מהנדסת העיר' : 'סגן').localeCompare(b === 'm1' ? 'מהנדסת העיר' : 'סגן', 'he')));
+  assert.deepStrictEqual(ids(o({ firmId: 'bld' }).kinds), ['contractor']);
+  assert.deepStrictEqual(ids(o({ personId: 'm1' }).kinds), ['municipality']);
+  assert.deepStrictEqual(ids(o({}, { kind: 'contr' }).kinds), ['contractor'], 'found in English');
+  assert.deepStrictEqual(ids(o({}, { firm: 'lod city' }).firms), ['lod']);
+  assert.deepStrictEqual(ids(o({}, { person: 'eng@' }).people), ['m1']);
+  assert.deepStrictEqual(RL.contactRowOptions(null, null, null, null), { kinds: [], firms: [], people: [] });
+});
+
+test('addRowOptions: the office\'s own people join the lists, and a register firm of the same name gives way', () => {
+  const tags = [{ typeCode: 'discipline', code: 'architecture', nameHe: 'אדריכלות', sortOrder: 1 }, { typeCode: 'discipline', code: 'structural', nameHe: 'קונסטרוקציה', sortOrder: 2 }];
+  const firms = [
+    { id: 'kk', nameHe: 'קנפו כלימור אדריכלים', tags: { discipline: ['architecture'] } },
+    { id: 'st', nameHe: 'קורות', tags: { discipline: ['structural'] } },
+  ];
+  const persons = [{ id: 'old', nameHe: 'עובד לשעבר', firmId: 'kk' }, { id: 's1', nameHe: 'מהנדס', firmId: 'st' }];
+  const local = { firm: { id: '__office', name: 'קנפו כלימור אדריכלים' }, disciplines: ['architecture'],
+    people: [{ id: 'staff:1', name: 'שי', mobile: '054', email: 'shay@kk' }, { id: 'staff:2', name: '  ' }] };
+  const o = pick => RL.addRowOptions(persons, firms, tags, [], [{ id: 'ARCH' }, { id: 'STRC' }], pick || {}, {}, local);
+  const all = o();
+  assert.deepStrictEqual(all.firms.map(f => f.id).sort(), ['__office', 'st'], 'one office of that name: ours');
+  assert.deepStrictEqual(all.people.map(p => p.id).sort(), ['s1', 'staff:1'], 'the register\'s person there gives way; a nameless one is left out');
+  assert.deepStrictEqual(all.people.find(p => p.id === 'staff:1'), { id: 'staff:1', name: 'שי', firm: 'קנפו כלימור אדריכלים', firmId: '__office', disciplines: ['architecture'], mobile: '054', email: 'shay@kk', local: true });
+  assert.deepStrictEqual(o({ discipline: 'architecture' }).firms.map(f => f.id), ['__office'], 'ARCH leads to our office');
+  assert.deepStrictEqual(o({ firmId: '__office' }).disciplines.map(d => d.code), ['architecture']);
+  assert.strictEqual(RL.addRowOptions(persons, firms, tags, [], [], {}, {}).people.some(p => p.local), false, 'without local, nothing changes');
 });
 
 test('paletteFor: each register tag colour borrows the hub discipline of that hue, grey otherwise', () => {
