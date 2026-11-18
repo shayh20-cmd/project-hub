@@ -4115,6 +4115,7 @@ Object.assign(HE_EN, {
 "העובד נשאר ברשימת העובדים של המשרד.": "They stay on the office's staff list.",
 "איש הקשר לא שמור ב-KKarcDB, וימחק.": "This contact isn't in KKarcDB, so it will be deleted.",
 "שנה סוג": "Change type",
+"+ פריט חדש": "+ New item",
 });
 
 window.I18N_HE_EN = HE_EN;
