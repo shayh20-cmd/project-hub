@@ -40,6 +40,24 @@
     '.rl-combo-row{display:flex;align-items:center;gap:6px;min-width:0}',
     '.rl-combo-person{flex-direction:column;align-items:flex-start;gap:1px}',
     '.rl-addrow .ov-row-save-btn:disabled{opacity:.35;cursor:default}',
+    '.rl-combo-extra{border-top:1px solid var(--border);margin-top:4px;padding-top:8px}',
+    '.rl-combo-new{color:var(--accent);font-weight:600}',
+    '.rl-dlg-back{position:fixed;inset:0;z-index:1100;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:16px}',
+    '.rl-dlg{width:min(440px,100%);max-height:calc(100vh - 32px);overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.4);padding:16px 18px;font-size:13px}',
+    '.rl-dlg-title{font-size:15px;font-weight:700;margin:0 0 12px}',
+    '.rl-dlg-grid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 12px;align-items:center}',
+    '.rl-dlg-grid label{color:var(--text-2);font-size:12px}',
+    '.rl-dlg-req::after{content:" *";color:var(--accent)}',
+    '.rl-dlg-note{grid-column:2;font-size:11px;color:var(--text-3);margin-top:-4px}',
+    '.rl-dlg-similar{margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;background:var(--surface-2)}',
+    '.rl-dlg-similar-h{font-size:12px;font-weight:600;margin-bottom:6px}',
+    '.rl-dlg-similar-row{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px}',
+    '.rl-dlg-similar-row .rl-btn{margin-inline-start:auto;padding:2px 8px;font-size:11px}',
+    '.rl-dlg-badge{margin-inline-start:auto;font-size:11px;color:var(--text-3)}',
+    '.rl-dlg-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}',
+    '.rl-btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}',
+    '.rl-btn-primary:hover{color:#fff;filter:brightness(1.1)}',
+    '.rl-btn:disabled{opacity:.45;cursor:default}',
     '.rl-dm{flex:none;margin-top:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:12px}',
     '.rl-dm-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap;padding:8px 10px;font-weight:700;font-size:12px;color:var(--text)}',
     '.rl-dm-note{font-weight:400;font-size:11px;color:var(--text-3)}',
@@ -442,12 +460,13 @@
     }, [ok, d]);
   }
 
+  const EXTRA = { extra: true };
   /* One field of the add row: an input whose list opens on focus, narrows as you type, and takes
      its first entry on Enter (the arrows move through it). `label` is the pick's text, `onQuery`
      hands the search to the caller, who narrows `options`; `onDone` follows a pick (the next
      field), `onEscape` an Escape with the list shut. The list is fixed to the window, above the
      field when there is no room below, since the table's box clips what overflows it. */
-  function Combo({ label, options, keyOf, textOf, renderOption, onPick, onClear, onQuery, onDone, onEscape, placeholder, inputRef }) {
+  function Combo({ label, options, keyOf, textOf, renderOption, onPick, onClear, onQuery, onDone, onEscape, placeholder, inputRef, extra }) {
     const [editing, setEditing] = useState(false);
     const [text, setText] = useState('');
     const [pos, setPos] = useState(null);
@@ -488,16 +507,24 @@
       const el = list.current && list.current.querySelector('[aria-selected="true"]');
       if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
     }, [hi]);
-    const pick = o => { onPick(o); shut(); if (onDone) onDone(o); };
+    // `extra` (typed text → { render, onPick } or null): one more entry under the list, reached
+    // like the others — the name field's "new person in the register".
+    const typed = editing ? text.trim() : '';
+    const ext = extra && typed ? extra(typed) : null;
+    const all = ext ? options.concat([EXTRA]) : options;
+    const pick = o => {
+      if (o === EXTRA) { shut(); ext.onPick(typed); return; }
+      onPick(o); shut(); if (onDone) onDone(o);
+    };
     const onKeyDown = e => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         if (!pos) { place(); return; }
-        const n = options.length;
+        const n = all.length;
         if (n) setHi(i => (i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n);
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (pos && options.length) pick(options[Math.min(hi, options.length - 1)]);
+        if (pos && all.length) pick(all[Math.min(hi, all.length - 1)]);
         else if (!pos && label && onDone) onDone(null);
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -532,7 +559,97 @@
         className: 'rl-combo-opt' + (i === hi ? ' on' : ''),
         onMouseEnter: () => setHi(i), onClick: () => pick(o),
       }, renderOption ? renderOption(o) : h('span', { 'data-i18n-skip': '' }, textOf(o))))
-        : h('div', { className: 'rl-muted' }, 'אין תוצאות')), document.body) : null);
+        : h('div', { className: 'rl-muted' }, 'אין תוצאות'),
+      ext ? h('div', {
+        key: '+extra', role: 'option', 'aria-selected': hi === options.length,
+        className: 'rl-combo-opt rl-combo-extra' + (hi === options.length ? ' on' : ''),
+        onMouseEnter: () => setHi(options.length), onClick: () => pick(EXTRA),
+      }, ext.render) : null), document.body) : null);
+  }
+
+  /* The add row's "new person in the register" (2026-11-18): a popup over the page, filled from
+     what was typed and picked in the row. An existing consultant office is required — a missing
+     one is added in Settings → Firms first. Add creates the contact in the register, then puts
+     them on the project; a close name already in the register is offered first, so a duplicate
+     is not made by accident. */
+  function NewPerson({ draft, directory, members, projectId, onCancel, onPick, onDone }) {
+    const [f, setF] = useState(draft);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState(null);
+    const put = k => e => setF(o => Object.assign({}, o, { [k]: e.target.value }));
+    const lang = window.I18N && window.I18N.get ? window.I18N.get() : 'he';
+    const firms = RL.firmChoices(directory.firms, f.firmId, lang);
+    const firm = f.firmId ? directory.firms.find(x => x.id === f.firmId) : null;
+    const discs = RL.disciplineChoices(directory.tags, firm, lang);
+    const similar = useMemo(() => RL.similarPeople(directory.persons, directory.firms, members, [f.nameHe, f.name]),
+      [directory, members, f.nameHe, f.name]);
+    const named = !!(RL.blank(f.nameHe) || RL.blank(f.name));
+    const ready = named && !!f.firmId && !busy;
+    const who = RL.blank(f.nameHe) || RL.blank(f.name);
+    const create = () => {
+      if (!ready) return;
+      setBusy(true); setError(null);
+      const fail = r => { setBusy(false); if (r.state === 'signed-out') recheck(); setError(RL.writeErrorOf(r, null, who).text); };
+      write('POST', '/api/contacts', RL.newPersonBody(f)).then(r => {
+        if (r.state !== 'ok') { fail(r); return null; }
+        const pid = r.data && r.data.id;
+        const he = RL.blank(f.nameHe);
+        // POST /api/contacts takes no Hebrew name: it follows as an edit of the new contact.
+        return (pid && he ? write('PATCH', '/api/contacts/' + pid, { field: 'nameHe', value: he, was: null }) : Promise.resolve(null))
+          .then(() => (pid ? client.send('PUT', '/api/projects/' + encodeURIComponent(projectId) + '/members/' + encodeURIComponent(pid), null) : { state: 'unreachable' }))
+          .then(m => {
+            if (m.state !== 'ok') { fail(m); return; }
+            reloadProject(projectId); onDone();
+          });
+      }, () => fail({ state: 'unreachable' }));
+    };
+    const skip = { 'data-i18n-skip': '' };
+    const field = (key, label, extra) => [
+      h('label', { key: key + 'l', htmlFor: 'rl-np-' + key, className: extra && extra.required ? 'rl-dlg-req' : null }, label),
+      h('input', Object.assign({ key, id: 'rl-np-' + key, className: 'ov-edit-input', value: f[key], onChange: put(key), dir: 'auto' }, extra, { required: undefined })),
+    ];
+    return ReactDOM.createPortal(h('div', {
+      className: 'rl-dlg-back',
+      onMouseDown: e => { if (e.target === e.currentTarget && !busy) onCancel(); },
+    }, h('div', {
+      className: 'rl-dlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'rl-np-title',
+      onKeyDown: e => {
+        if (e.key === 'Escape') { e.stopPropagation(); if (!busy) onCancel(); }
+        if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); create(); }
+      },
+    },
+    h('h3', { id: 'rl-np-title', className: 'rl-dlg-title' }, 'איש קשר חדש במאגר'),
+    h('div', { className: 'rl-dlg-grid' },
+      field('nameHe', 'שם בעברית', { autoFocus: !f.nameHe }),
+      field('name', 'שם באנגלית', { autoFocus: !!f.nameHe && !f.name }),
+      h('label', { htmlFor: 'rl-np-firm', className: 'rl-dlg-req' }, 'משרד'),
+      h('select', { id: 'rl-np-firm', className: 'rl-dm-sel', value: f.firmId, onChange: e => setF(o => {
+        const next = directory.firms.find(x => x.id === e.target.value);
+        const own = next && next.tags && next.tags.discipline || [];
+        return Object.assign({}, o, { firmId: e.target.value, discipline: o.discipline || (own.length === 1 ? own[0] : '') });
+      }) },
+      h('option', { value: '' }, 'בחירת משרד…'),
+      firms.map(x => h('option', Object.assign({ key: x.id, value: x.id }, skip), x.label))),
+      h('div', { className: 'rl-dlg-note' }, 'משרד שלא ברשימה מוסיפים קודם בהגדרות ← משרדי יועצים'),
+      h('label', { htmlFor: 'rl-np-disc' }, 'תחום'),
+      h('select', { id: 'rl-np-disc', className: 'rl-dm-sel', value: f.discipline, onChange: put('discipline') },
+        h('option', { value: '' }, '—'),
+        discs.map(x => h('option', Object.assign({ key: x.code, value: x.code }, skip), x.label))),
+      field('mobile', 'נייד', { dir: 'ltr', inputMode: 'tel' }),
+      field('email', 'מייל', { dir: 'ltr', type: 'email' })),
+    similar.length ? h('div', { className: 'rl-dlg-similar', role: 'status' },
+      h('div', { className: 'rl-dlg-similar-h' }, 'שם דומה כבר נמצא במאגר:'),
+      similar.slice(0, 5).map(x => h('div', { key: x.id, className: 'rl-dlg-similar-row' },
+        h('span', skip, x.name),
+        x.firm ? h('span', Object.assign({ className: 'rl-add-firm' }, skip), x.firm) : null,
+        x.onProject
+          ? h('span', { className: 'rl-dlg-badge' }, 'כבר בפרויקט')
+          : h('button', { type: 'button', className: 'rl-btn', onClick: () => onPick(x) }, 'בחירה ברשומה')))) : null,
+    error ? h('div', { className: 'rl-add-error', role: 'alert', style: { margin: '12px 0 0' } }, error) : null,
+    h('div', { className: 'rl-dlg-foot' },
+      h('button', { type: 'button', className: 'rl-btn', onClick: onCancel, disabled: busy }, 'ביטול'),
+      h('button', { type: 'button', className: 'rl-btn rl-btn-primary', onClick: create, disabled: !ready },
+        busy ? 'מוסיף…' : 'הוספה לפרויקט')))), document.body);
   }
 
   /* The add row: a discipline, an office and a name, each list narrowed by the other two picks
@@ -546,6 +663,7 @@
     const [qs, setQs] = useState({});
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
+    const [draft, setDraft] = useState(null);
     const refs = { discipline: useRef(null), firm: useRef(null), person: useRef(null), save: useRef(null) };
     const p = id ? s.projects[id] : null;
     const d = s.directory;
@@ -553,7 +671,7 @@
     const optionsFor = q => RL.addRowOptions(d.data.persons, d.data.firms, d.data.tags, p.data.members, hubDisciplines, pk, q, local);
     const base = useMemo(() => (open && ok ? optionsFor({}) : null), [open, ok, p, d, hubDisciplines, pk, local]);
     const opts = useMemo(() => (open && ok ? optionsFor(qs) : null), [open, ok, p, d, hubDisciplines, pk, qs, local]);
-    useEffect(() => { if (!open) { setPk({}); setQs({}); setError(null); setBusy(false); } }, [open]);
+    useEffect(() => { if (!open) { setPk({}); setQs({}); setError(null); setBusy(false); setDraft(null); } }, [open]);
     useEffect(() => { if (open && ok && refs.discipline.current) refs.discipline.current.focus(); }, [open, ok]);
     if (!open) return null;
     const cols = colSpan || 6;
@@ -616,7 +734,15 @@
             discipline: v.discipline || (x.disciplines.length === 1 ? x.disciplines[0] : null),
           })),
           onClear: () => setPk(v => Object.assign({}, v, { personId: null })),
-          onQuery: query('person'), onDone: focus('save'), onEscape: close,
+          // typing over a picked name lets go of it, so its phone and email leave the row
+          onQuery: v => { query('person')(v); if (v.trim()) setPk(x => (x.personId ? Object.assign({}, x, { personId: null }) : x)); },
+          onDone: focus('save'), onEscape: close,
+          extra: typed => ({
+            render: h('span', { className: 'rl-combo-row rl-combo-person' },
+              h('span', { className: 'rl-combo-new' }, '+ ', h('span', null, 'איש קשר חדש במאגר')),
+              h('span', Object.assign({ className: 'rl-add-firm' }, skip), typed)),
+            onPick: t => setDraft(RL.newPersonDraft(t, pk, d.data.firms)),
+          }),
         })),
         h('td', null, h('div', Object.assign({ className: 'ov-con-sub' }, skip), person && person.mobile ? person.mobile : '—')),
         h('td', null, h('div', Object.assign({ className: 'ov-con-sub' }, skip), person && person.email ? person.email : '—')),
@@ -627,7 +753,18 @@
             onKeyDown: e => { if (e.key === 'Escape') close(); },
           }, '✓'),
           h('button', { type: 'button', className: 'ov-row-del-btn', title: 'ביטול', 'aria-label': 'ביטול', onClick: close }, '×'))),
-      error ? h('tr', null, h('td', { colSpan: cols }, h('div', { className: 'rl-add-error', role: 'alert' }, error))) : null);
+      error ? h('tr', null, h('td', { colSpan: cols }, h('div', { className: 'rl-add-error', role: 'alert' }, error))) : null,
+      draft ? h(NewPerson, {
+        draft, directory: d.data, members: p.data.members, projectId: id,
+        onCancel: () => { setDraft(null); focus('person')(); },
+        onPick: x => {
+          const one = (base.people.find(y => y.id === x.id) || {}).disciplines || [];
+          setDraft(null);
+          setPk(v => ({ personId: x.id, firmId: x.firmId, discipline: v.discipline || (one.length === 1 ? one[0] : null) }));
+          focus('save')();
+        },
+        onDone: () => { setDraft(null); setPk({}); setQs({}); focus('discipline')(); },
+      }) : null);
   }
 
   /* Spec §2: a never-linked project whose code names exactly one register project is linked to

@@ -4116,6 +4116,12 @@ Object.assign(HE_EN, {
 "איש הקשר לא שמור ב-KKarcDB, וימחק.": "This contact isn't in KKarcDB, so it will be deleted.",
 "שנה סוג": "Change type",
 "+ פריט חדש": "+ New item",
+"איש קשר חדש במאגר": "New contact in the register",
+"בחירת משרד…": "Choose an office…",
+"משרד שלא ברשימה מוסיפים קודם בהגדרות ← משרדי יועצים": "An office that isn't listed is added first in Settings → Firms",
+"שם דומה כבר נמצא במאגר": "A similar name is already in the register",
+"כבר בפרויקט": "Already on the project",
+"בחירה ברשומה": "Use this one",
 });
 
 window.I18N_HE_EN = HE_EN;

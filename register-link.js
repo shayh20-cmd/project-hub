@@ -451,6 +451,45 @@
     return { name: blank(form.name), tags: { kind: ['consultant'], discipline: (form.disciplines || []).slice() } };
   }
 
+  /* The add row's "new person" popup. The register wants a name: the English one, or the
+     Hebrew one when that is all there is (the Hebrew follows as an edit, as in Settings). */
+  const HEBREW = /[֐-׿]/;
+  function newPersonDraft(typed, pick, firms) {
+    const t = String(typed == null ? '' : typed).trim();
+    const firmId = (pick && pick.firmId) || '';
+    const firm = firmId ? (firms || []).find(f => f.id === firmId) : null;
+    const own = tagsOf(firm, 'discipline');
+    return {
+      nameHe: HEBREW.test(t) ? t : '', name: HEBREW.test(t) ? '' : t, firmId,
+      discipline: (pick && pick.discipline) || (own.length === 1 ? own[0] : ''), mobile: '', email: '',
+    };
+  }
+  function newPersonBody(form) {
+    return newContactBody({
+      name: blank(form.name) || blank(form.nameHe), firmId: form.firmId || null, email: form.email, mobile: form.mobile,
+      disciplines: form.discipline ? [form.discipline] : [],
+    });
+  }
+  /* Register contacts whose name is close to the new one — the same once case, spaces and
+     punctuation are ignored, or one (3 letters or more) holding the other — so a duplicate is
+     caught before it is made. */
+  const squash = v => String(v == null ? '' : v).toLowerCase().replace(/[\p{P}\p{S}\s]/gu, '');
+  function similarPeople(persons, firms, members, names) {
+    const wanted = (names || []).map(squash).filter(n => n.length >= 2);
+    if (!wanted.length) return [];
+    const firmById = new Map((firms || []).map(f => [f.id, f]));
+    const onProject = new Set((members || []).map(m => m.personId));
+    const close = n => n.length >= 2 && wanted.some(w => w === n || (Math.min(w.length, n.length) >= 3 && (w.includes(n) || n.includes(w))));
+    return (persons || [])
+      .filter(p => p.isContact !== false && !tagsOf(p, 'kind').includes('internal'))
+      .filter(p => [p.name, p.nameHe].map(squash).some(close))
+      .map(p => {
+        const firm = p.firmId ? firmById.get(p.firmId) : null;
+        return { id: p.id, name: nameIn(p, 'he'), firm: firm ? nameIn(firm, 'he') : '', firmId: firm ? firm.id : null, onProject: onProject.has(p.id) };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  }
+
   /* The directory with one record changed as the register now has it — shown at once while the
      re-read is on its way. */
   function withEdit(data, list, id, patch) {
@@ -609,7 +648,7 @@
     nextEntry, hasConsultants, createRegisterClient,
     isConsultant, consultantFirms, nameIn, tagLabel, canEditRegister, editablePerson, disciplineChoices,
     firmChoices, firmConsultantCount, filterConsultants, filterFirms, addableContacts, addRowOptions, contactRowOptions, removalOf,
-    blank, newContactBody, newFirmBody, withEdit, writeErrorOf,
+    blank, newContactBody, newFirmBody, newPersonDraft, newPersonBody, similarPeople, withEdit, writeErrorOf,
   };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.RegisterLink = api;

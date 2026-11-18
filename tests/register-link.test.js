@@ -532,6 +532,40 @@ test('newFirmBody: the name, and Kind consultant with the chosen disciplines', (
     { name: 'Alpha', tags: { kind: ['consultant'], discipline: ['fire', 'hvac'] } });
 });
 
+test('newPersonDraft: the typed name in its language, the row\'s office, a discipline when one is known', () => {
+  const firms = [{ id: 'f1', tags: { discipline: ['fire'] } }, { id: 'f2', tags: { discipline: ['fire', 'safety'] } }];
+  assert.deepStrictEqual(RL.newPersonDraft(' רפי כהן ', { firmId: 'f1' }, firms),
+    { nameHe: 'רפי כהן', name: '', firmId: 'f1', discipline: 'fire', mobile: '', email: '' });
+  assert.strictEqual(RL.newPersonDraft('Rafi', {}, firms).name, 'Rafi', 'Latin text is the English name');
+  assert.strictEqual(RL.newPersonDraft('Rafi', { firmId: 'f2' }, firms).discipline, '', 'two disciplines: none guessed');
+  assert.strictEqual(RL.newPersonDraft('Rafi', { firmId: 'f2', discipline: 'safety' }, firms).discipline, 'safety', 'the row\'s pick wins');
+});
+
+test('newPersonBody: the English name, or the Hebrew one when that is all; one discipline', () => {
+  assert.deepStrictEqual(RL.newPersonBody({ nameHe: 'רפי', name: ' Rafi ', firmId: 'f1', discipline: 'fire', mobile: ' 050 ', email: '' }), {
+    name: 'Rafi', firmId: 'f1', email: null, mobile: '050', tags: { kind: ['consultant'], discipline: ['fire'] },
+  });
+  const he = RL.newPersonBody({ nameHe: 'רפי', name: ' ', firmId: 'f1', discipline: '' });
+  assert.strictEqual(he.name, 'רפי');
+  assert.deepStrictEqual(he.tags.discipline, []);
+});
+
+test('similarPeople: close names across spaces and punctuation, marked when already on the project', () => {
+  const persons = [
+    { id: 'a', nameHe: 'רפי בן-דוד', firmId: 'f1' },
+    { id: 'b', name: 'Ilan Bar' },
+    { id: 'c', nameHe: 'גל אור' },
+    { id: 's', nameHe: 'רפי בן דוד', tags: { kind: ['internal'] } },
+    { id: 'u', name: 'Rafi Ben David', isContact: false },
+  ];
+  const firms = [{ id: 'f1', nameHe: 'אש-פרו' }];
+  assert.deepStrictEqual(RL.similarPeople(persons, firms, [], ['רפי בן דוד', 'Rafi Ben David']),
+    [{ id: 'a', name: 'רפי בן-דוד', firm: 'אש-פרו', firmId: 'f1', onProject: false }], 'staff and register users left out');
+  assert.strictEqual(RL.similarPeople(persons, firms, [{ personId: 'b' }], ['', 'ilan'])[0].onProject, true);
+  assert.deepStrictEqual(RL.similarPeople(persons, firms, [], ['גל', '']), [], 'two letters must match whole');
+  assert.deepStrictEqual(RL.similarPeople(persons, firms, [], ['', ' ']), []);
+});
+
 test('withEdit: one record changed, the rest and the input untouched', () => {
   const data = { persons: [{ id: 'p1', mobile: '1' }, { id: 'p2', mobile: '2' }], firms: [] };
   const next = RL.withEdit(data, 'persons', 'p2', { mobile: '9' });
